@@ -465,8 +465,12 @@ export function App() {
               </button>
               <button
                 className="gha-ghost gha-icon-btn"
-                title="Rebuild and restart the project"
-                onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}
+                title="Save, rebuild and restart the project"
+                onClick={async () => {
+                  // Rebuild what the user sees: save the open file first.
+                  if (open && dirty.has(key(open.project, open.path))) await save()
+                  api.rebuild(project).catch((e) => setError(String(e)))
+                }}
               >
                 <RebuildIcon /> Rebuild
               </button>
