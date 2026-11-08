@@ -24,7 +24,7 @@ func TestLSPCompletionThroughWorkspace(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	dir := filepath.Join(root, "projects", "demo")
 	os.MkdirAll(dir, 0o755)
-	src := "package main\n\nimport ha \"github.com/gusimo/gohomeassistant/sdk\"\n\nfunc main() {\n\tha.Mu\n\tundefinedThing()\n}\n"
+	src := "package main\n\nimport ha \"gohomeassistant.local/sdk\"\n\nfunc main() {\n\tha.Mu\n\tundefinedThing()\n}\n"
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module demo\n\ngo 1.24\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644)
 	sdk, _ := filepath.Abs("../../sdk")

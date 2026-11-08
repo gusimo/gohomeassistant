@@ -76,7 +76,7 @@ import (
 	"log"
 	"time"
 
-	ha "github.com/gusimo/gohomeassistant/sdk"
+	ha "gohomeassistant.local/sdk"
 	"gohomeassistant.local/ent"
 )
 
@@ -104,10 +104,15 @@ func main() {
 }
 ```
 
-**Generated entities (`gohomeassistant.local/ent`).**
-- The package is generated locally from your instance and only resolved
-  locally (through a `go.work` GoHomeAssistant writes for each project);
-  `.local` signals that it can't be downloaded from anywhere.
+**Both imports are local.** `gohomeassistant.local/sdk` (the `ha` package,
+source in `sdk/`) is bundled with GoHomeAssistant, and
+`gohomeassistant.local/ent` is generated from your instance. Neither is
+downloaded: GoHomeAssistant resolves them through a `go.work` it writes for
+each project, and `.local` signals that they can't be fetched from anywhere.
+The SDK therefore always matches the running GoHomeAssistant; it is updated
+together with the image or add-on.
+
+**Generated entities (`ent`).**
 - Every entity is a field of its domain: `ent.Light`, `ent.Sensor`,
   `ent.BinarySensor`, and so on.
 - Every service that targets a domain is a method on its entities.

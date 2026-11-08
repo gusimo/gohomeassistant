@@ -130,7 +130,7 @@ func TestGeneratedCodeCompiles(t *testing.T) {
 	write("app/main.go", `package main
 
 import (
-	ha "github.com/gusimo/gohomeassistant/sdk"
+	ha "gohomeassistant.local/sdk"
 	"gohomeassistant.local/ent"
 )
 

@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	ha "github.com/gusimo/gohomeassistant/sdk"
+	ha "gohomeassistant.local/sdk"
 )
 
 func main() {

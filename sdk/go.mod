@@ -1,3 +1,3 @@
-module github.com/gusimo/gohomeassistant/sdk
+module gohomeassistant.local/sdk
 
 go 1.24

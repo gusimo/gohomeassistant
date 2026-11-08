@@ -17,7 +17,7 @@ import (
 
 const program = `package main
 
-import ha "github.com/gusimo/gohomeassistant/sdk"
+import ha "gohomeassistant.local/sdk"
 
 func main() {
 	c := ha.MustConnect()
