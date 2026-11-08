@@ -7,7 +7,7 @@ reacts to your entities:
 ```go
 ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
 	if ent.BinarySensor.FrontDoor.IsOn() {
-		ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80})
+		ent.Light.Hall.TurnOn(p.LightTurnOn{BrightnessPct: 80})
 	}
 })
 ```
@@ -26,7 +26,8 @@ git repository (see the *Changes* section and the *History* tab).
 ## Features
 
 - `gohomeassistant.local/ent`: typed entities and services, generated from
-  your instance. It is regenerated whenever entities or services change.
+  your instance (service parameters in `gohomeassistant.local/ent/p`). It is
+  regenerated whenever entities or services change.
 - Code completion, hover docs, auto-imports and gofmt on save (gopls).
 - **Entities** panel: search, live state, insert as code.
 - **Debug** tab: breakpoints, stepping, variables (Delve).

@@ -7,7 +7,7 @@ keep running, and a project only restarts if its compiled code actually
 changed.
 
 - **Typed entities and services**, generated from your instance:
-  `ent.Light.Kitchen.TurnOn(ent.LightTurnOn{BrightnessPct: 50})`
+  `ent.Light.Kitchen.TurnOn(p.LightTurnOn{BrightnessPct: 50})`
 - **Web IDE**: Monaco editor with gopls (completion for your entities,
   services and their parameters, hover docs, auto-imports, live errors,
   gofmt on save)
@@ -76,8 +76,9 @@ import (
 	"log"
 	"time"
 
-	ha "gohomeassistant.local/sdk"
 	"gohomeassistant.local/ent"
+	"gohomeassistant.local/ent/p"
+	ha "gohomeassistant.local/sdk"
 )
 
 func main() {
@@ -86,13 +87,13 @@ func main() {
 	// React to state changes of one entity.
 	ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
 		if ent.BinarySensor.FrontDoor.IsOn() {
-			ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80, Transition: 2})
+			ent.Light.Hall.TurnOn(p.LightTurnOn{BrightnessPct: 80, Transition: 2})
 		}
 	})
 
 	// Read states.
 	if w, ok := ent.Sensor.Power.Float(); ok && w > 3000 {
-		ent.Svc.Notify.MobileAppPhone(ent.NotifyMobileAppPhone{Message: "High power usage"})
+		ent.Svc.Notify.MobileAppPhone(p.NotifyMobileAppPhone{Message: "High power usage"})
 	}
 
 	// Timers: run code on the handler goroutine later.
@@ -116,9 +117,10 @@ together with the image or add-on.
 - Every entity is a field of its domain: `ent.Light`, `ent.Sensor`,
   `ent.BinarySensor`, and so on.
 - Every service that targets a domain is a method on its entities.
-- Parameters are optional structs, typed from HA's service descriptions.
-  Zero values are not sent; use `Extra: map[string]any{...}` for anything
-  else.
+- Parameters are optional structs in the separate package
+  `gohomeassistant.local/ent/p` (so `ent.` lists only your domains), typed
+  from HA's service descriptions: `p.LightTurnOn{BrightnessPct: 80}`. Zero
+  values are not sent; use `Extra: map[string]any{...}` for anything else.
 - `ent.Svc.<Domain>.<Service>(...)` covers all services, including those
   without a target (scripts, notify) and calls by area or device
   (`ha.Target{AreaID: ...}`).

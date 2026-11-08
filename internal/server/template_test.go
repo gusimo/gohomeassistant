@@ -20,7 +20,10 @@ func TestTemplateBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	sdk, _ := filepath.Abs("../../sdk")
-	for name, ent := range map[string][]byte{"stub": codegen.Stub(), "generated": generated} {
+	for name, files := range map[string]codegen.Files{
+		"stub":      {Ent: codegen.Stub(), Params: codegen.StubParams()},
+		"generated": generated,
+	} {
 		t.Run(name, func(t *testing.T) {
 			dir, _ := filepath.EvalSymlinks(t.TempDir())
 			write := func(p string, b []byte) {
@@ -30,7 +33,8 @@ func TestTemplateBuilds(t *testing.T) {
 				}
 			}
 			write("ent/go.mod", []byte("module "+codegen.ModulePath+"\n\ngo 1.24\n"))
-			write("ent/ent.go", ent)
+			write("ent/ent.go", files.Ent)
+			write("ent/p/p.go", files.Params)
 			write("app/go.mod", []byte("module app\n\ngo 1.24\n"))
 			write("app/main.go", []byte(MainTemplate))
 			write("go.work", []byte("go 1.24\n\nuse (\n\t./app\n\t./ent\n\t"+sdk+"\n)\n"))

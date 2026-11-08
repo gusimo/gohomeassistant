@@ -131,11 +131,12 @@ func main() {
 	//
 	//	ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
 	//		if ent.BinarySensor.FrontDoor.IsOn() {
-	//			ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80})
+	//			ent.Light.Hall.TurnOn(p.LightTurnOn{BrightnessPct: 80})
 	//		}
 	//	})
 	//
-	// Type "ent." to browse them.
+	// Type "ent." to browse them. Service parameters (p.LightTurnOn, ...)
+	// are in "gohomeassistant.local/ent/p"; typing "p." imports it.
 
 	_ = ent.Svc // keeps the ent import while it is unused; remove once you use ent
 

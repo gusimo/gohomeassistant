@@ -44,7 +44,7 @@ const servicesJSON = `{
  }}}
 }`
 
-func generateFixture(t *testing.T) string {
+func generateFixture(t *testing.T) Files {
 	t.Helper()
 	var states []State
 	var services Services
@@ -54,11 +54,11 @@ func generateFixture(t *testing.T) string {
 	if err := json.Unmarshal([]byte(servicesJSON), &services); err != nil {
 		t.Fatal(err)
 	}
-	src, _, err := Generate(states, services)
+	files, _, err := Generate(states, services)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(src)
+	return files
 }
 
 func TestRefs(t *testing.T) {
@@ -81,34 +81,61 @@ func TestRefs(t *testing.T) {
 }
 
 func TestGenerateAPI(t *testing.T) {
-	src := generateFixture(t)
+	f := generateFixture(t)
+	ent, params := string(f.Ent), string(f.Params)
 	for _, want := range []string{
 		"Kitchen LightEntity",             // entity field
 		"X0x00158d00086f44ec LightEntity", // leading digit
 		"Power_2 SensorEntity",            // name collision power / power_
-		"func (e LightEntity) TurnOn(p ...LightTurnOn) error",
-		"func (e LightEntity) StateService(",                         // clashes with ha.Entity.State
-		"func (e MediaPlayerEntity) SonosJoin(p ...SonosJoin) error", // cross-domain target
+		"func (e LightEntity) TurnOn(args ...p.LightTurnOn) error",
+		"func (e LightEntity) StateService(",                              // clashes with ha.Entity.State
+		"func (e MediaPlayerEntity) SonosJoin(args ...p.SonosJoin) error", // cross-domain target
+		"func (svcScript) Recalibrate(args ...p.ScriptRecalibrate) error", // no target
+		"func (svcLight) TurnOn(target ha.Target, args ...p.LightTurnOn) error",
+		"unit W",
+	} {
+		if !strings.Contains(ent, want) {
+			t.Errorf("ent lacks %q", want)
+		}
+	}
+	for _, want := range []string{
+		"package p",
+		"type LightTurnOn struct",
 		"BrightnessPct float64",
 		"RgbColor []int",
 		"RgbwColor any", // from collapsed section
 		"Kelvin float64",
 		"Flash string",
 		`one of: "short", "long"`,
-		"func (svcScript) Recalibrate(p ...ScriptRecalibrate) error", // no target
-		"func (svcLight) TurnOn(target ha.Target, p ...LightTurnOn) error",
-		"unit W",
+		"func (x LightTurnOn) ServiceData() map[string]any",
 	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("generated code lacks %q", want)
+		if !strings.Contains(params, want) {
+			t.Errorf("p lacks %q", want)
 		}
+	}
+	// "ent." should list domains, not parameter types.
+	if strings.Contains(ent, "type LightTurnOn struct") {
+		t.Error("parameter types are still in package ent")
+	}
+}
+
+// A service field called service_data must not clash with ServiceData().
+func TestServiceDataFieldName(t *testing.T) {
+	var services Services
+	json.Unmarshal([]byte(`{"x":{"y":{"fields":{"service_data":{"selector":{"object":{}}}}}}}`), &services)
+	f, _, err := Generate(nil, services)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(f.Params), "ServiceData_2 any") {
+		t.Errorf("field not renamed:\n%s", f.Params)
 	}
 }
 
 // TestGeneratedCodeCompiles builds a program using the generated package
 // against the real SDK.
 func TestGeneratedCodeCompiles(t *testing.T) {
-	src := generateFixture(t)
+	f := generateFixture(t)
 	dir, err := filepath.EvalSymlinks(t.TempDir()) // go.work needs real paths
 	if err != nil {
 		t.Fatal(err)
@@ -125,21 +152,23 @@ func TestGeneratedCodeCompiles(t *testing.T) {
 		}
 	}
 	write("ent/go.mod", "module "+ModulePath+"\n\ngo 1.24\n")
-	write("ent/ent.go", src)
+	write("ent/ent.go", string(f.Ent))
+	write("ent/p/p.go", string(f.Params))
 	write("app/go.mod", "module app\n\ngo 1.24\n")
 	write("app/main.go", `package main
 
 import (
-	ha "gohomeassistant.local/sdk"
 	"gohomeassistant.local/ent"
+	"gohomeassistant.local/ent/p"
+	ha "gohomeassistant.local/sdk"
 )
 
 func main() {
-	_ = ent.Light.Kitchen.TurnOn(ent.LightTurnOn{BrightnessPct: 50, RgbColor: []int{255, 0, 0}})
+	_ = ent.Light.Kitchen.TurnOn(p.LightTurnOn{BrightnessPct: 50, RgbColor: []int{255, 0, 0}})
 	_ = ent.Light.Kitchen.TurnOn()
-	_ = ent.MediaPlayer.LivingRoom.SonosJoin(ent.SonosJoin{Master: "media_player.kitchen"})
+	_ = ent.MediaPlayer.LivingRoom.SonosJoin(p.SonosJoin{Master: "media_player.kitchen"})
 	_ = ent.Svc.Light.TurnOn(ha.Target{AreaID: []string{"kitchen"}})
-	_ = ent.Svc.Notify.MobileAppPhone(ent.NotifyMobileAppPhone{Message: "hi", Extra: map[string]any{"x": 1}})
+	_ = ent.Svc.Notify.MobileAppPhone(p.NotifyMobileAppPhone{Message: "hi", Extra: map[string]any{"x": 1}})
 	_, _ = ent.Sensor.Power.Float()
 	_ = ent.Light.Kitchen.IsOn()
 }
@@ -154,8 +183,8 @@ func main() {
 }
 
 func TestDataOmitsZeroValues(t *testing.T) {
-	src := generateFixture(t)
-	if !strings.Contains(src, `if p.BrightnessPct != 0 {`) || !strings.Contains(src, `if len(p.RgbColor) > 0 {`) {
+	params := string(generateFixture(t).Params)
+	if !strings.Contains(params, `if x.BrightnessPct != 0 {`) || !strings.Contains(params, `if len(x.RgbColor) > 0 {`) {
 		t.Error("zero checks missing")
 	}
 }

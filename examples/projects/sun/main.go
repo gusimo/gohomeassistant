@@ -17,7 +17,7 @@ func main() {
 	sun.OnChange(func(ch ha.StateChange) {
 		if ch.Old != nil && ch.New != nil && ch.Old.State != ch.New.State {
 			log.Printf("sun: %s -> %s", ch.Old.State, ch.New.State)
-			// e.g. ent.Light.Porch.TurnOn(ent.LightTurnOn{BrightnessPct: 60})
+			// e.g. ent.Light.Porch.TurnOn(p.LightTurnOn{BrightnessPct: 60})
 		}
 	})
 

@@ -47,9 +47,16 @@ func (g *Generator) EnsureModule() error {
 	if _, err := writeIfChanged(filepath.Join(g.Dir, "go.mod"), mod); err != nil {
 		return err
 	}
-	src := filepath.Join(g.Dir, "ent.go")
-	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
-		return os.WriteFile(src, Stub(), 0o644)
+	if err := os.MkdirAll(filepath.Join(g.Dir, "p"), 0o755); err != nil {
+		return err
+	}
+	for path, stub := range map[string][]byte{"ent.go": Stub(), "p/p.go": StubParams()} {
+		full := filepath.Join(g.Dir, filepath.FromSlash(path))
+		if _, err := os.Stat(full); errors.Is(err, os.ErrNotExist) {
+			if err := os.WriteFile(full, stub, 0o644); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -153,15 +160,20 @@ func (g *Generator) generate(ctx context.Context) error {
 	if err := g.call(ctx, "get_services", &services); err != nil {
 		return err
 	}
-	src, refs, err := Generate(states, services)
+	files, refs, err := Generate(states, services)
 	if err != nil {
 		return err
 	}
 	g.mu.Lock()
 	g.refs = refs
 	g.mu.Unlock()
-	changed, err := writeIfChanged(filepath.Join(g.Dir, "ent.go"), src)
-	if err != nil || !changed {
+	// p first: the new ent.go may refer to new parameter types.
+	changedP, err := writeIfChanged(filepath.Join(g.Dir, "p", "p.go"), files.Params)
+	if err != nil {
+		return err
+	}
+	changedEnt, err := writeIfChanged(filepath.Join(g.Dir, "ent.go"), files.Ent)
+	if err != nil || !(changedP || changedEnt) {
 		return err
 	}
 	g.Log.Info("entities regenerated", "entities", len(states), "service_domains", len(services))
