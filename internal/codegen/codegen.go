@@ -222,6 +222,7 @@ func (g *gen) emit(states []State, services Services) {
 type field struct {
 	key, name, typ, zeroCheck string
 	doc                       string
+	required                  bool
 }
 
 func (g *gen) params(typeName, domain, service string, sv Service) {
@@ -233,7 +234,7 @@ func (g *gen) params(typeName, domain, service string, sv Service) {
 	for _, key := range sortedKeys(flat) {
 		f := flat[key]
 		typ, zero := goType(f.Selector)
-		fs = append(fs, field{key: key, name: fields.add(goName(key)), typ: typ, zeroCheck: zero, doc: describeField(key, f)})
+		fs = append(fs, field{key: key, name: fields.add(goName(key)), typ: typ, zeroCheck: zero, required: f.Required, doc: describeField(key, f)})
 	}
 
 	doc := fmt.Sprintf("%s are the parameters of %s.%s.", typeName, domain, service)
@@ -244,7 +245,7 @@ func (g *gen) params(typeName, domain, service string, sv Service) {
 		doc += "\n// " + t
 	}
 	w := func(format string, args ...any) { fmt.Fprintf(&g.pbuf, format, args...) }
-	w("// %s\n// Zero values are not sent.\ntype %s struct {\n", doc, typeName)
+	w("// %s\n// Zero values of optional fields are not sent; required fields always are.\ntype %s struct {\n", doc, typeName)
 	for _, f := range fs {
 		w("\t// %s\n\t%s %s\n", f.doc, f.name, f.typ)
 	}
@@ -252,6 +253,10 @@ func (g *gen) params(typeName, domain, service string, sv Service) {
 
 	w("// ServiceData returns the fields to send (used by package ent).\nfunc (x %s) ServiceData() map[string]any {\n\tm := map[string]any{}\n", typeName)
 	for _, f := range fs {
+		if f.required { // e.g. a cover position of 0 must be sent
+			w("\tm[%q] = x.%s\n", f.key, f.name)
+			continue
+		}
 		w("\tif %s {\n\t\tm[%q] = x.%s\n\t}\n", fmt.Sprintf(f.zeroCheck, "x."+f.name), f.key, f.name)
 	}
 	w("\tfor k, v := range x.Extra {\n\t\tm[k] = v\n\t}\n\treturn m\n}\n\n")

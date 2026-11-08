@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Fix: required service parameters are always sent, even when zero
+  (`SetCoverPosition(p.CoverSetCoverPosition{Position: 0})` closed nothing).
+
 ## 0.1.1
 
 - Snippets: built-in and your own, in a panel and in editor completion.

@@ -188,3 +188,11 @@ func TestDataOmitsZeroValues(t *testing.T) {
 		t.Error("zero checks missing")
 	}
 }
+
+// Required fields are sent even when zero: cover position 0 means "closed".
+func TestDataAlwaysSendsRequired(t *testing.T) {
+	params := string(generateFixture(t).Params)
+	if !strings.Contains(params, "\tm[\"message\"] = x.Message\n") || strings.Contains(params, `if x.Message != "" {`) {
+		t.Errorf("required field message is not always sent:\n%s", params[strings.Index(params, "func (x NotifyMobileAppPhone)"):][:300])
+	}
+}
