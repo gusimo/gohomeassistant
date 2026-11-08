@@ -23,9 +23,10 @@ type Entry struct {
 
 // Event is sent to subscribers: either a log entry or a status (any JSON).
 type Event struct {
-	Type   string `json:"type"` // "log" or "status"
-	Log    *Entry `json:"log,omitempty"`
-	Status any    `json:"status,omitempty"`
+	Type    string `json:"type"` // "log", "status" or "files"
+	Log     *Entry `json:"log,omitempty"`
+	Status  any    `json:"status,omitempty"`
+	Project string `json:"project,omitempty"` // for "files": files of this project changed on disk
 }
 
 type Bus struct {
@@ -69,6 +70,13 @@ func (b *Bus) PublishStatus(status any) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.fanout(Event{Type: "status", Status: status})
+}
+
+// PublishFiles tells clients that files of a project changed on disk.
+func (b *Bus) PublishFiles(project string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.fanout(Event{Type: "files", Project: project})
 }
 
 func (b *Bus) publish(e Entry) {

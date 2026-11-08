@@ -1,157 +1,235 @@
 # GoHomeAssistant
 
-Write Home Assistant automations in Go. Each project is a directory with a
-`go.mod`; GoHomeAssistant builds and runs it, and rebuilds it on every change.
-Neither Home Assistant nor GoHomeAssistant restarts: only the project process
-is swapped, and only if the new version compiles.
+Write Home Assistant automations in **Go**, in a web IDE that runs next to
+Home Assistant. Every project is a small Go program. Save a file and it is
+rebuilt and swapped within about a second. Home Assistant and GoHomeAssistant
+keep running, and a project only restarts if its compiled code actually
+changed.
 
-## How it works
+- **Typed entities and services**, generated from your instance:
+  `ent.Light.Kitchen.TurnOn(ent.LightTurnOn{BrightnessPct: 50})`
+- **Web IDE**: Monaco editor with gopls (completion for your entities,
+  services and their parameters, hover docs, auto-imports, live errors,
+  gofmt on save)
+- **Hot reload** without restarting anything. If the new code doesn't
+  compile, the previous version keeps running.
+- **Debugger in the browser**: breakpoints, stepping, call stack, variables
+  (Delve)
+- **Git per project**: changes, diffs, commits, history, restore old versions
+- **Entity browser** with live state, attributes and "insert as code"
+- **Live logs** of every project
+- **Login with your Home Assistant account** (administrators only)
 
+## Quick start
+
+You need Docker and a Home Assistant long-lived access token (HA → your
+profile → *Security* → *Long-lived access tokens*).
+
+```sh
+cp .env.example .env     # then set HA_URL and HA_TOKEN in .env
+./start.sh               # builds the image and starts the container
 ```
-GoHomeAssistant host ── one WebSocket ──► Home Assistant
-   │  watches projects/, builds with `go build`, supervises processes
-   │  unix socket (HA protocol subset, ids remapped per project)
-   ├── project A  (import ha "github.com/gusimo/gohomeassistant/sdk")
-   └── project B
-```
 
-- `internal/ha`: reconnecting HA client; subscriptions survive reconnects.
-- `internal/bridge`: shares the HA connection with projects and removes a project's subscriptions when it exits.
-- `internal/project`: discovery, file watching, build, process swap, restart with backoff.
-- `sdk/`: the module projects import. It has no dependencies, keeps a state cache and runs handlers serially.
+Open <http://127.0.0.1:8099> and log in with your HA account. Create a
+project with **+ new project**.
 
-Projects don't need a `replace` directive for the SDK: the host builds each
-one with a generated `go.work`.
+| Command | |
+|---|---|
+| `./start.sh` | build the image and (re)start the container |
+| `./start.sh logs` | follow the logs |
+| `./start.sh stop` | stop the container (projects and data are kept in the `gha-data` volume) |
+| `./start.sh dev` | run without Docker (needs Go 1.24 and Node; no debugger on macOS) |
 
-## Typed entities
+## Writing automations
 
-GoHomeAssistant generates the module `github.com/gusimo/gohomeassistant/ent`
-from your instance (under `$GHA_DATA_DIR/gen/ent`, not inside your projects):
+A project is a directory with a `go.mod` and Go files. New projects start
+from a template:
 
 ```go
+package main
+
 import (
+	"log"
+	"time"
+
 	"github.com/gusimo/gohomeassistant/ent"
 	ha "github.com/gusimo/gohomeassistant/sdk"
 )
 
-ha.MustConnect()
-ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
-	if ent.BinarySensor.FrontDoor.IsOn() {
-		ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80, Transition: 2})
+func main() {
+	ha.MustConnect()
+
+	// React to state changes of one entity.
+	ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
+		if ent.BinarySensor.FrontDoor.IsOn() {
+			ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80, Transition: 2})
+		}
+	})
+
+	// Read states.
+	if w, ok := ent.Sensor.Power.Float(); ok && w > 3000 {
+		ent.Svc.Notify.MobileAppPhone(ent.NotifyMobileAppPhone{Message: "High power usage"})
 	}
-})
-w, ok := ent.Sensor.Power.Float()                     // numeric state
-ent.Svc.Light.TurnOff(ha.Target{AreaID: []string{"kitchen"}})
-ent.Svc.Notify.MobileAppPhone(ent.NotifyMobileAppPhone{Message: "hi"})
-ha.Default().Run()
+
+	// Timers: run code on the handler goroutine later.
+	time.AfterFunc(10*time.Minute, func() {
+		ha.Default().Go(func() { log.Println("ten minutes later") })
+	})
+
+	ha.Default().Run() // blocks until the project is stopped or reloaded
+}
 ```
 
-- Every entity is a field of its domain (`ent.Light`, `ent.Sensor`, …). Every
-  service that targets that domain is a method on it. Parameters are optional
-  structs, typed from HA's selectors, and zero values are not sent. Use `Extra`
-  for anything else.
-- `ent.Svc.<Domain>.<Service>` lists all services, including those without a
-  target (scripts, notify).
-- Regeneration happens when entities or services are added or removed. All
-  projects are rebuilt, but a process is only restarted if its binary actually
-  changed. If an entity a project uses disappears, the build fails and the
-  previous version keeps running.
+**Generated entities (`ent`).**
+- Every entity is a field of its domain: `ent.Light`, `ent.Sensor`,
+  `ent.BinarySensor`, and so on.
+- Every service that targets a domain is a method on its entities.
+- Parameters are optional structs, typed from HA's service descriptions.
+  Zero values are not sent; use `Extra: map[string]any{...}` for anything
+  else.
+- `ent.Svc.<Domain>.<Service>(...)` covers all services, including those
+  without a target (scripts, notify) and calls by area or device
+  (`ha.Target{AreaID: ...}`).
+- The package is regenerated when entities or services are added or removed.
+  If an entity a project uses disappears, the build fails and the previous
+  version keeps running.
 
-## Web UI
+**SDK (`ha`).**
+- `ha.MustConnect()` / `ha.Connect()`
+- `c.State(id)`, `c.States()`: from a local cache, always current
+- `c.OnStateChange(id, fn)`: `""` for all entities
+- `c.OnEvent(type, fn)`: any HA event
+- `c.CallService(...)`, `c.FireEvent(...)`
+- `c.Call(msg)`: any WebSocket command
+- `c.Go(fn)`
+- `c.Run()`
 
-Open `http://<host>:8099` (`GHA_HTTP_ADDR`). You get projects with live
-status, files, a Monaco editor and a live log panel. ⌘S / Ctrl+S formats
-(gofmt), saves and hot-reloads, and build errors show up as markers. gopls
-provides completion for your entities and services, hover docs, signature
-help, auto-imports and live diagnostics. gopls runs per open project, so it
-must be in `PATH`; the Docker image includes it. An entity browser
-(search, live state, attributes) inserts or copies the matching Go
-expression, e.g. `ent.Sensor.Power`.
+Handlers run one at a time, so you don't need locks. A panic in a handler is
+logged and doesn't stop the project.
 
-### Debugging
+You can import third-party Go modules as usual: `go.mod` / `go.sum` in the
+project, downloaded on build (this needs internet access).
 
-In the **Debug** tab, turn on *Debug mode* for a project. It is rebuilt
-without optimizations and runs under a headless Delve (`dlv`, included in the
-Docker image), and it keeps running normally until a breakpoint is hit.
-Click left of a line number to set a breakpoint. You get the call stack,
-variables (expandable), Continue (F5), Pause, Step over (F10), Step into
-(F11) and Step out (Shift+F11). Saving still hot-reloads, and the debugger
-re-attaches with your breakpoints.
+## The web UI
 
-While the program is paused, HA events queue up (about 30,000 messages,
-roughly 25 minutes on a busy instance). Beyond that the project is
-disconnected and restarts. Debug mode needs Linux (Docker or add-on) and
-isn't kept across restarts of GoHomeAssistant.
+- **Editor**: ⌘S / Ctrl+S formats, saves and hot-reloads. Build errors
+  appear as red markers. Files changed on disk (git, other editors) reload
+  automatically unless you have unsaved edits.
+- **Entities** (button in the header): search, live state, attributes.
+  **Insert** puts e.g. `ent.Sensor.Power` at the cursor.
+- **Debug** tab: turn on *Debug mode* for a project. It is rebuilt without
+  optimizations and runs under Delve, but keeps running normally until a
+  breakpoint is hit. Click left of a line number to set a breakpoint. You
+  get Continue (F5), Pause, Step over (F10), Step into (F11), Step out
+  (Shift+F11), the call stack and expandable variables. After a hot reload
+  the debugger re-attaches with your breakpoints.
+- **Changes** (sidebar) and **History** tab: every project is a git
+  repository (new projects get an initial commit; older ones get an
+  *Initialize git* button). Click a changed file to see its diff, commit with
+  a message (author: your HA user) or discard. In History, open any commit's
+  files as a diff and **Restore this version** into the working copy.
+- **Logs** tab: output of all projects and GoHomeAssistant itself, filterable
+  by project.
 
-### Login
+## Configuration
 
-The UI can run code with full access to HA, so only **HA administrators** get
-in:
+Everything goes in `.env` (see `.env.example`). `.env` is ignored by git and
+by Docker builds, because it contains your token.
 
-- **Add-on:** through HA Ingress (HA's own login). Direct requests that don't
-  come from the Supervisor are rejected.
-- **Standalone (default `GHA_AUTH=ha`):** you log in with your HA account via
-  HA's OAuth flow. GoHomeAssistant checks `is_admin`, revokes the HA token it
-  received and keeps its own session cookie (in memory, so restarting means
-  logging in again).
-  - `GHA_HA_PUBLIC_URL`: HA's URL as your browser sees it, if different from
-    `HA_URL` (e.g. `HA_URL=http://homeassistant:8123` inside a Docker network).
-  - `GHA_PUBLIC_URL`: GoHomeAssistant's own URL, if it can't be derived from
-    the request (e.g. behind a reverse proxy).
-- **`GHA_AUTH=none`:** no authentication, for local development only.
+| Variable | Default | |
+|---|---|---|
+| `HA_URL` | | Home Assistant URL as seen from GoHomeAssistant |
+| `HA_TOKEN` | | Long-lived access token |
+| `GHA_AUTH` | `ha` | `ha`: log in with your HA account, admins only. `none`: no login (development only) |
+| `GHA_BIND` | `127.0.0.1` | Interface for the UI. Use `0.0.0.0` to reach it from your network |
+| `GHA_PORT` | `8099` | Port for the UI |
+| `GHA_HA_PUBLIC_URL` | `HA_URL` | HA's URL as your browser sees it, if different (e.g. `HA_URL=http://homeassistant:8123` inside a Docker network) |
+| `GHA_PUBLIC_URL` | from request | GoHomeAssistant's own URL, if it can't be derived (reverse proxy) |
+| `GHA_PROJECTS_HOST_DIR` | Docker volume | Keep projects in a folder on this machine instead, e.g. `./projects` |
+| `GHA_WATCH_POLL` | off | e.g. `1s`: also poll for file changes. Needed for changes made outside the UI to a bind-mounted folder on macOS/Windows |
+| `GHA_GIT_EMAIL` | `gohomeassistant@localhost` | E-mail address for commits |
 
-Frontend development: `cd web && npm install && npm run dev` starts Vite on
-:5173 and proxies `/api` to a running GoHomeAssistant on :8099.
-`npm run build` writes into `internal/server/dist/app`, which is embedded into
-the Go binary.
+Inside the container the defaults are `GHA_PROJECTS_DIR=/data/projects`,
+`GHA_DATA_DIR=/data/gohomeassistant` and `GHA_HTTP_ADDR=:8099`.
 
-## Run locally
-
-```sh
-HA_URL=http://homeassistant.local:8123 HA_TOKEN=<long-lived token> \
-GHA_PROJECTS_DIR=./examples/projects GHA_DATA_DIR=./data GHA_SDK_DIR=./sdk \
-go run ./cmd/gohomeassistant
-```
-
-Build the UI first (`cd web && npm install && npm run build`); otherwise
-`/` only shows a hint.
-
-Edit `examples/projects/hello/main.go` and save to see it reload.
-
-## Docker (standalone)
+### Without the script
 
 ```sh
 docker build -t gohomeassistant .
-docker run -p 8099:8099 -v gha-data:/data -e HA_URL=... -e HA_TOKEN=... gohomeassistant
+docker run -d --name gohomeassistant -p 127.0.0.1:8099:8099 \
+  --env-file .env -v gha-data:/data gohomeassistant
 ```
 
-Inside the add-on, `SUPERVISOR_TOKEN` is picked up automatically.
+## Security
 
-**Editing on macOS/Windows with a bind mount** (`-v ./projects:/data/projects`):
-file change events don't cross the Docker VM boundary, so add
-`-e GHA_WATCH_POLL=1s`. With Rancher Desktop's default reverse-sshfs mounts,
-changes take about 5–10s to become visible in the container because sshfs
-caches. Switching Rancher Desktop to VZ with virtiofs mounts makes them
-visible almost immediately.
+The UI can run arbitrary code with full access to Home Assistant. Therefore:
 
-## Tests
+- Only **HA administrators** can log in. GoHomeAssistant uses HA's own
+  OAuth login, checks `is_admin`, revokes the HA token it received and keeps
+  its own session (an `HttpOnly`, `SameSite=Lax` cookie, in memory).
+  Requests that change something must come from the UI's own origin.
+- As an add-on (planned), access will go through HA Ingress only.
+- `GHA_AUTH=none` disables all of this. Use it only on a machine nobody else
+  can reach.
+- The file and git APIs reject paths outside a project and hidden files
+  (`.git`).
+
+## How it works
+
+```
+ Browser ── HTTP / SSE / WebSocket ──► GoHomeAssistant ── one WebSocket ──► Home Assistant
+ (React, Monaco)                        │  auth, REST API, logs
+                                        │  gopls (LSP) and Delve (DAP) bridges
+                                        │  entity code generator
+                                        │  watches projects, builds, supervises
+                                        │  unix socket (HA protocol subset)
+                                        ├── project A  (go build, runs as a process)
+                                        └── project B  (optionally under Delve)
+```
+
+| Package | |
+|---|---|
+| `internal/ha` | Reconnecting HA client; subscriptions survive reconnects |
+| `internal/bridge` | Shares the HA connection with projects; cleans up their subscriptions |
+| `internal/project` | Discovery, file watching, builds (`go.work` with SDK and `ent`), process swap, restart with backoff, debug mode |
+| `internal/codegen` | Generates `ent` from `get_states` / `get_services` |
+| `internal/server` | REST API, event stream, LSP/DAP bridges, git |
+| `internal/auth` | HA OAuth login, Ingress mode, sessions |
+| `internal/logbus` | Log and status fan-out to the UI |
+| `sdk/` | The module projects import (no dependencies) |
+| `web/` | The UI (React, Vite, Monaco), embedded into the binary |
+
+## Development
 
 ```sh
-go test -race ./...
+go test -race ./...                     # unit and end-to-end tests (fake HA server)
+cd web && npm install && npm run dev    # UI on :5173, proxies /api to :8099
 ```
 
-The end-to-end test runs a fake HA server and real project builds. It covers
-hot reload, a broken build keeping the old version running, and cleanup on
-project removal.
+The debugger test needs Delve on Linux. Run it in a container:
+
+```sh
+docker run --rm -v "$PWD":/src -w /src golang:1.24 sh -c \
+  'go install github.com/go-delve/delve/cmd/dlv@v1.25.2 && go test -run TestDebugger ./internal/project/'
+```
+
+`npm run build` writes into `internal/server/dist/app`, which `go build`
+embeds.
+
+## Known limitations
+
+- Login sessions are kept in memory: after a restart you log in again.
+  Debug mode is not kept across restarts either.
+- While a program is paused in the debugger, HA events queue up (about 25
+  minutes on a busy instance). Beyond that the project reconnects.
+- Each open project runs its own gopls (a few hundred MB of memory).
+- Git is local only for now.
 
 ## Roadmap
 
 1. ✅ Host, SDK, hot reload
-2. ✅ Typed entity and service code generation (`ent.Light.Kitchen.TurnOn()`)
-3. Web UI
-   - ✅ 3a: projects, files, editor, build markers, live logs
-   - ✅ 3b: gopls code completion
-   - 3c: HA login (Ingress or OAuth), entity browser
-4. ✅ In-UI debugging (Delve DAP)
-5. Git: local first, then remotes
-6. HA add-on packaging (config.yaml, Ingress)
+2. ✅ Typed entities and services
+3. ✅ Web UI: editor, completion, logs, entity browser, HA login
+4. ✅ Debugging in the UI
+5. Git: ✅ local; next: remotes (push/pull with an SSH key or token)
+6. Home Assistant add-on (`config.yaml`, Ingress)

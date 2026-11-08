@@ -1,4 +1,7 @@
+# Never send secrets or local data into the build context.
+.env
 .git
 data
+projects
 web/node_modules
 internal/server/dist/app

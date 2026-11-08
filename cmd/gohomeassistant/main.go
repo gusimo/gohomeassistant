@@ -103,6 +103,7 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 		Log:      log,
 		Poll:     poll,
 		OnStatus: func(st project.Status) { bus.PublishStatus(st) },
+		OnFiles:  bus.PublishFiles,
 	})
 	if err != nil {
 		return err

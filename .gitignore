@@ -1,5 +1,10 @@
-/gohomeassistant
+# Local configuration with secrets (see .env.example)
+.env
+# Local runtime data (./start.sh dev)
 /data/
+/projects/
+/gohomeassistant
+# Frontend build output (embedded into the binary) and dependencies
 /internal/server/dist/*
 !/internal/server/dist/.gitkeep
 /web/node_modules/

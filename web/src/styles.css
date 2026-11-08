@@ -220,3 +220,33 @@ button.gha-toggled { color: var(--text); background: var(--active); }
 .gha-var-name { color: var(--accent); flex: none; }
 .gha-var-value { overflow: hidden; text-overflow: ellipsis; }
 .gha-nested { padding-left: 14px; }
+
+/* Git */
+.gha-git-badge { font-family: var(--mono); font-size: 11px; font-weight: 600; flex: none; width: 12px; text-align: center; }
+.gha-git-modified, .gha-git-renamed { color: var(--warn); }
+.gha-git-added, .gha-git-untracked { color: var(--ok); }
+.gha-git-deleted { color: var(--err); }
+.gha-branch { float: right; text-transform: none; letter-spacing: 0; font-weight: normal; font-family: var(--mono); }
+.gha-git-init { padding: 4px 14px; }
+.gha-commit-box { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 6px; }
+.gha-commit-box textarea {
+  font: inherit; color: var(--text); background: var(--bg); resize: vertical;
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+}
+.gha-commit-box textarea:focus { outline: 1px solid var(--accent); }
+.gha-list li.gha-static { cursor: default; font-family: inherit; }
+.gha-list li.gha-static:hover { background: none; }
+.gha-diff { display: flex; flex-direction: column; height: 100%; }
+.gha-diff-header { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.gha-diff-body { flex: 1; min-height: 0; }
+.gha-history { flex: 1; min-height: 0; overflow-y: auto; }
+.gha-commits { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.gha-commit { display: flex; gap: 10px; padding: 3px 12px; cursor: pointer; align-items: baseline; }
+.gha-commit:hover { background: var(--hover); }
+.gha-commit.gha-active { background: var(--active); }
+.gha-commit-hash { font-family: var(--mono); color: var(--accent); flex: none; }
+.gha-commit-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-commit-meta { color: var(--muted); flex: none; }
+.gha-commit-files { list-style: none; margin: 0; padding: 2px 0 4px 70px; font-family: var(--mono); }
+.gha-commit-files li { display: flex; gap: 8px; padding: 1px 0; cursor: pointer; }
+.gha-commit-files li:hover { color: var(--accent); }

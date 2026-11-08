@@ -86,6 +86,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{name}/lsp", s.lsp)
 	mux.HandleFunc("GET /api/entities", s.entities)
 	mux.HandleFunc("POST /api/projects/{name}/debug", s.setDebug)
+	mux.HandleFunc("GET /api/projects/{name}/git/status", s.gitStatus)
+	mux.HandleFunc("POST /api/projects/{name}/git/init", s.gitInitHandler)
+	mux.HandleFunc("POST /api/projects/{name}/git/commit", s.gitCommit)
+	mux.HandleFunc("GET /api/projects/{name}/git/log", s.gitLog)
+	mux.HandleFunc("GET /api/projects/{name}/git/commits/{rev}", s.gitCommitFiles)
+	mux.HandleFunc("GET /api/projects/{name}/git/show", s.gitShow)
+	mux.HandleFunc("POST /api/projects/{name}/git/discard", s.gitDiscard)
+	mux.HandleFunc("POST /api/projects/{name}/git/restore", s.gitRestore)
 	mux.HandleFunc("GET /api/projects/{name}/dap", s.dap)
 
 	if app, err := fs.Sub(dist, "dist/app"); err == nil {
@@ -153,6 +161,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o644); err != nil {
 		httpError(w, err)
 		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	if err := s.gitInit(r.Context(), dir, user); err != nil {
+		s.log.Warn("git init failed", "project", req.Name, "err", err)
 	}
 	s.mgr.Rescan()
 	w.WriteHeader(http.StatusCreated)
@@ -257,6 +269,7 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mgr.Trigger(r.PathValue("name")) // don't wait for the file watcher
+	s.bus.PublishFiles(r.PathValue("name"))
 	w.WriteHeader(http.StatusNoContent)
 }
 

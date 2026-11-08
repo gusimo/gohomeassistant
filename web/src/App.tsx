@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, parseBuildError, subscribe, type FileInfo, type LogEntry, type Me, type Status } from './api'
-import { Editor } from './Editor'
+import { api, parseBuildError, subscribe, type Commit, type FileInfo, type GitFile, type GitStatus, type LogEntry, type Me, type Status } from './api'
+import { DiffView, Editor } from './Editor'
+import { History, SourceControl, statusLetter } from './Git'
 import { Entities } from './Entities'
 import { DebugPanel, useDebugger, type Breakpoints } from './Debug'
 import { Logs } from './Logs'
 import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
-import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 const MAX_LOGS = 5000
 
@@ -36,6 +37,7 @@ function store(key: string, value: string) {
 }
 
 type OpenFile = { project: string; path: string; initial: string }
+type Diff = { path: string; title: string; original: string; modified: string; restoreRev?: string; inWorkingTree: boolean }
 const key = (project: string, path: string) => `${project}/${path}`
 
 export function App() {
@@ -51,7 +53,10 @@ export function App() {
   const [onlyProject, setOnlyProject] = useState(stored('gha.onlyProject') === '1')
   const [showEntities, setShowEntities] = useState(stored('gha.entities') === '1')
   const [me, setMe] = useState<Me | null>(null)
-  const [bottomTab, setBottomTab] = useState<'logs' | 'debug'>('logs')
+  const [bottomTab, setBottomTab] = useState<'logs' | 'debug' | 'history'>('logs')
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
+  const [diff, setDiff] = useState<Diff | null>(null)
+  const onFilesRef = useRef<(p: string) => void>(() => {})
   const [bpVersion, setBpVersion] = useState(0)
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
   const current = useRef<Record<string, string>>({}) // current editor content per file
@@ -105,6 +110,7 @@ export function App() {
           else next[s.name] = s
           return next
         }),
+      onFiles: (p) => onFilesRef.current(p),
       onConnection: setConnected,
     })
   }, [])
@@ -182,12 +188,108 @@ export function App() {
     openFile(project, stored(`gha.file.${project}`) ?? 'main.go')
   }, [project, projectExists, refreshFiles, openFile])
 
+  const refreshGit = useCallback(async (p: string) => {
+    try {
+      setGitStatus(await api.git.status(p))
+    } catch {
+      setGitStatus(null)
+    }
+  }, [])
+  useEffect(() => {
+    setGitStatus(null)
+    setDiff(null)
+    if (project && projectExists) refreshGit(project)
+  }, [project, projectExists, refreshGit])
+
+  // Files changed on disk (save, git, external editor): refresh lists and
+  // reload open files that have no unsaved edits.
+  const reloadTimer = useRef(0)
+  onFilesRef.current = (p) => {
+    if (p !== project) return
+    clearTimeout(reloadTimer.current)
+    reloadTimer.current = window.setTimeout(async () => {
+      refreshFiles(p)
+      refreshGit(p)
+      for (const k of Object.keys(saved.current)) {
+        if (!k.startsWith(p + '/')) continue
+        const path = k.slice(p.length + 1)
+        let text: string
+        try {
+          text = await api.readFile(p, path)
+        } catch {
+          delete saved.current[k] // deleted on disk
+          setOpen((o) => (o && o.project === p && o.path === path ? null : o))
+          continue
+        }
+        if (text === saved.current[k]) continue
+        if (dirty.has(k)) {
+          setError(`"${path}" changed on disk. Your unsaved edits were kept; saving overwrites the file.`)
+          continue
+        }
+        saved.current[k] = text
+        current.current[k] = text
+        const model = projectDir ? monaco.editor.getModel(monaco.Uri.parse(fileURI(projectDir, path))) : null
+        if (model) model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null)
+      }
+    }, 300)
+  }
+
+  const openWorkingDiff = async (path: string) => {
+    if (!project) return
+    try {
+      const head = await api.git.show(project, 'HEAD', path)
+      const st = gitStatus?.files?.find((f) => f.path === path)?.status
+      const modified = st === 'deleted' ? '' : await api.readFile(project, path)
+      setDiff({
+        path,
+        title: `${path}: last commit ↔ working copy`,
+        original: head.text,
+        modified,
+        inWorkingTree: st !== 'deleted',
+      })
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const openCommitDiff = async (path: string, c: Commit, st: GitFile['status']) => {
+    if (!project) return
+    try {
+      const before = st === 'added' ? { text: '' } : await api.git.show(project, `${c.hash}^`, path)
+      const after = st === 'deleted' ? { text: '' } : await api.git.show(project, c.hash, path)
+      setDiff({
+        path,
+        title: `${path} in ${c.short}: ${c.message}`,
+        original: before.text,
+        modified: after.text,
+        restoreRev: st === 'deleted' ? undefined : c.hash,
+        inWorkingTree: files.some((f) => f.path === path),
+      })
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const restore = async (path: string, rev: string) => {
+    if (!project) return
+    try {
+      await api.git.restore(project, path, rev)
+      setDiff(null)
+      await openFile(project, path)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   // When the debugger stops, show the Debug tab and the paused line.
   useEffect(() => {
     if (dbg.state === 'stopped') setBottomTab('debug')
   }, [dbg.state])
   useEffect(() => {
-    if (project && frameFile) openFile(project, frameFile)
+    if (project && frameFile) {
+      setDiff(null)
+      openFile(project, frameFile)
+    }
   }, [project, frameFile, openFile])
 
   const save = useCallback(async () => {
@@ -313,18 +415,30 @@ export function App() {
               {files.map((f) => (
                 <li
                   key={f.path}
-                  className={open?.project === project && open.path === f.path ? 'gha-active' : ''}
-                  onClick={() => openFile(project, f.path)}
+                  className={!diff && open?.project === project && open.path === f.path ? 'gha-active' : ''}
+                  onClick={() => {
+                    setDiff(null)
+                    openFile(project, f.path)
+                  }}
                 >
                   <span className="gha-file-name">
                     {f.path}
                     {dirty.has(key(project, f.path)) && <span className="gha-dirty">●</span>}
                   </span>
+                  {gitBadge(gitStatus, f.path)}
                   {f.path !== 'go.mod' && <ConfirmButton label="×" title="Delete file" onConfirm={() => deleteFile(f.path)} />}
                 </li>
               ))}
             </ul>
             <InlineInput placeholder="+ new file" pattern={/^[\w./-]+$/} onSubmit={createFile} />
+            <SourceControl
+              project={project}
+              status={gitStatus}
+              onChanged={() => refreshGit(project)}
+              onOpenDiff={openWorkingDiff}
+              onError={setError}
+              confirm={(label, title, onConfirm) => <ConfirmButton label={label} title={title} onConfirm={onConfirm} />}
+            />
           </>
         )}
       </aside>
@@ -363,7 +477,26 @@ export function App() {
 
         <div className="gha-editor-row">
         <div className="gha-editor">
-          {projectExists && open && open.project === project ? (
+          {projectExists && diff ? (
+            <div className="gha-diff">
+              <div className="gha-diff-header">
+                <span className="gha-crumb">{diff.title}</span>
+                <span className="gha-spacer" />
+                {diff.restoreRev && (
+                  <ConfirmButton label="Restore this version" title="Replace the working copy with this version (uncommitted)" onConfirm={() => restore(diff.path, diff.restoreRev!)} />
+                )}
+                {diff.inWorkingTree && (
+                  <button className="gha-small gha-ghost" onClick={() => { setDiff(null); if (project) openFile(project, diff.path) }}>
+                    Open file
+                  </button>
+                )}
+                <button className="gha-small gha-ghost" onClick={() => setDiff(null)}>Close</button>
+              </div>
+              <div className="gha-diff-body">
+                <DiffView path={diff.path} original={diff.original} modified={diff.modified} dark={dark} />
+              </div>
+            </div>
+          ) : projectExists && open && open.project === project ? (
             <Editor
               modelPath={projectDir ? fileURI(projectDir, open.path) : key(open.project, open.path)}
               filePath={open.path}
@@ -393,6 +526,11 @@ export function App() {
               Debug
               {status?.debug && <span className={`gha-dot gha-dbg-dot gha-dbg-${dbg.state}`} />}
             </button>
+            {gitStatus?.repo && (
+              <button className={bottomTab === 'history' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('history')}>
+                History
+              </button>
+            )}
           </nav>
           {bottomTab === 'logs' || !projectExists || !project ? (
             <Logs
@@ -405,6 +543,8 @@ export function App() {
               }}
               onClear={() => setLogs([])}
             />
+          ) : bottomTab === 'history' && gitStatus?.repo ? (
+            <History project={project} head={gitStatus.head} onOpenCommitDiff={openCommitDiff} onError={setError} />
           ) : (
             <DebugPanel
               project={project}
@@ -419,6 +559,11 @@ export function App() {
       </main>
     </div>
   )
+}
+
+function gitBadge(st: GitStatus | null, path: string) {
+  const f = st?.files?.find((x) => x.path === path)
+  return f ? <span className={`gha-git-badge gha-git-${f.status}`} title={f.status}>{statusLetter[f.status]}</span> : null
 }
 
 function dotClass(s: Status) {

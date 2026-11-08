@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import MonacoEditor, { loader, type OnMount } from '@monaco-editor/react'
+import MonacoEditor, { DiffEditor, loader, type OnMount } from '@monaco-editor/react'
 // Bundle Monaco locally (no CDN): the UI must work offline and behind Ingress.
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 // editor.api is the bare core; this adds the contributions (suggest widget,
@@ -108,6 +108,27 @@ export function Editor(props: Props) {
         tabSize: 4,
         insertSpaces: false, // gofmt style
         glyphMargin: true, // breakpoints
+      }}
+    />
+  )
+}
+
+// DiffView shows two versions of a file side by side (read-only).
+export function DiffView({ path, original, modified, dark }: { path: string; original: string; modified: string; dark: boolean }) {
+  return (
+    <DiffEditor
+      original={original}
+      modified={modified}
+      language={language(path)}
+      theme={dark ? 'vs-dark' : 'vs'}
+      options={{
+        readOnly: true,
+        originalEditable: false,
+        renderSideBySide: true,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize: 13,
       }}
     />
   )

@@ -34,6 +34,10 @@ export type EntityState = {
   ref: string // Go expression, e.g. "ent.Light.Kitchen"; "" before the first generation
 }
 
+export type GitFile = { path: string; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }
+export type GitStatus = { repo: boolean; branch?: string; head?: string; files?: GitFile[] }
+export type Commit = { hash: string; short: string; author: string; date: string; message: string }
+
 export type Me = { user: { id: string; name: string; admin: boolean }; mode: 'none' | 'ingress' | 'ha' }
 
 async function req(method: string, url: string, body?: BodyInit): Promise<Response> {
@@ -45,6 +49,8 @@ async function req(method: string, url: string, body?: BodyInit): Promise<Respon
   if (!res.ok) throw new Error((await res.text()).trim() || `${res.status} ${res.statusText}`)
   return res
 }
+
+const proj = (p: string) => `./api/projects/${encodeURIComponent(p)}`
 
 const fileURL = (project: string, path: string) =>
   `./api/projects/${encodeURIComponent(project)}/files/${path.split('/').map(encodeURIComponent).join('/')}`
@@ -61,6 +67,21 @@ export const api = {
   setDebug: (name: string, enabled: boolean) =>
     req('POST', `./api/projects/${encodeURIComponent(name)}/debug`, JSON.stringify({ enabled })),
   entities: async (): Promise<EntityState[]> => (await req('GET', './api/entities')).json(),
+  git: {
+    status: async (p: string): Promise<GitStatus> => (await req('GET', `${proj(p)}/git/status`)).json(),
+    init: (p: string) => req('POST', `${proj(p)}/git/init`),
+    commit: (p: string, message: string) => req('POST', `${proj(p)}/git/commit`, JSON.stringify({ message })),
+    log: async (p: string): Promise<Commit[]> => (await req('GET', `${proj(p)}/git/log`)).json(),
+    commitFiles: async (p: string, rev: string): Promise<GitFile[]> =>
+      (await req('GET', `${proj(p)}/git/commits/${rev}`)).json(),
+    // show returns the file at a revision; exists is false if it didn't exist there.
+    show: async (p: string, rev: string, path: string) => {
+      const res = await req('GET', `${proj(p)}/git/show?${new URLSearchParams({ rev, path })}`)
+      return { text: await res.text(), exists: res.headers.get('X-Exists') !== '0' }
+    },
+    discard: (p: string, path: string) => req('POST', `${proj(p)}/git/discard`, JSON.stringify({ path })),
+    restore: (p: string, path: string, rev: string) => req('POST', `${proj(p)}/git/restore`, JSON.stringify({ path, rev })),
+  },
   me: async (): Promise<Me> => (await req('GET', './api/me')).json(),
   logout: () => req('POST', './auth/logout'),
 }
@@ -71,6 +92,7 @@ export function subscribe(handlers: {
   onReset: () => void
   onLog: (e: LogEntry) => void
   onStatus: (s: Status) => void
+  onFiles: (project: string) => void
   onConnection: (connected: boolean) => void
 }): () => void {
   const es = new EventSource('./api/events')
@@ -83,6 +105,7 @@ export function subscribe(handlers: {
     const ev = JSON.parse(m.data)
     if (ev.type === 'log') handlers.onLog(ev.log)
     else if (ev.type === 'status') handlers.onStatus(ev.status)
+    else if (ev.type === 'files') handlers.onFiles(ev.project)
   }
   return () => es.close()
 }

@@ -38,6 +38,8 @@ type Config struct {
 	Poll time.Duration
 	// OnStatus, if set, is called on every project status change.
 	OnStatus func(Status)
+	// OnFiles, if set, is called when files of a project change on disk.
+	OnFiles func(project string)
 }
 
 type Manager struct {
@@ -140,6 +142,9 @@ func (m *Manager) handleFSEvent(ctx context.Context, ev fsnotify.Event) {
 	}
 	if p != nil && relevant(ev.Name) {
 		p.Trigger()
+	}
+	if p != nil && len(parts) > 1 && m.cfg.OnFiles != nil {
+		m.cfg.OnFiles(parts[0])
 	}
 }
 
@@ -318,6 +323,9 @@ func (m *Manager) poll(ctx context.Context) {
 		sig := signature(p.dir)
 		if p.sig != 0 && sig != p.sig {
 			p.Trigger()
+			if m.cfg.OnFiles != nil {
+				m.cfg.OnFiles(p.name)
+			}
 		}
 		p.sig = sig
 	}
