@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gusimo/gohomeassistant/internal/bridge"
+	"github.com/gusimo/gohomeassistant/internal/codegen"
 	"github.com/gusimo/gohomeassistant/internal/ha"
 	"github.com/gusimo/gohomeassistant/internal/project"
 )
@@ -75,10 +76,19 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
+	goVersion, err := project.GoVersion()
+	if err != nil {
+		return err
+	}
+	gen := &codegen.Generator{Client: client, Dir: filepath.Join(dataDir, "gen", "ent"), GoVersion: goVersion, Log: log}
+	if err := gen.EnsureModule(); err != nil {
+		return err
+	}
+
 	mgr, err := project.NewManager(project.Config{
 		Root:     projectsDir,
 		BuildDir: filepath.Join(dataDir, "build"),
-		SDKDir:   sdkDir,
+		Modules:  []string{sdkDir, gen.Dir},
 		Socket:   socket,
 		Log:      log,
 		Poll:     poll,
@@ -86,6 +96,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	gen.OnChange = mgr.TriggerAll
+	go gen.Run(ctx)
+
 	log.Info("gohomeassistant started", "projects", projectsDir)
 	return mgr.Run(ctx)
 }

@@ -1,6 +1,7 @@
 package project
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,5 +43,38 @@ func TestSignature(t *testing.T) {
 	write("sub/util.go", "package main\n")
 	if signature(dir) == s1 {
 		t.Error("new file in subdirectory not detected")
+	}
+}
+
+// The restart-skip logic relies on reproducible builds: the same sources must
+// produce byte-identical binaries, even with different output names.
+func TestBuildIsReproducible(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "projects", "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module demo\n\ngo 1.24\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)
+	m, err := NewManager(Config{Root: filepath.Join(root, "projects"), BuildDir: filepath.Join(root, "build"), Log: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newProject(m, "demo")
+	var sums [2][32]byte
+	for i := range sums {
+		bin, err := p.build(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sums[i], err = fileHash(bin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sums[0] != sums[1] {
+		t.Fatal("identical sources produced different binaries")
 	}
 }

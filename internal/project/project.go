@@ -3,7 +3,9 @@ package project
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -60,12 +62,18 @@ func (p *Project) loop(ctx context.Context) {
 			} else {
 				p.log.Error("build failed", "err", err)
 			}
+		} else if sum, err := fileHash(bin); err == nil && proc != nil && sum == proc.hash {
+			// Identical binary (e.g. entities changed that this project
+			// doesn't use): keep the running process and its state.
+			os.Remove(bin)
+			p.log.Info("build ok, binary unchanged: keeping the running process")
 		} else {
 			p.log.Info("build ok", "took", time.Since(start).Round(time.Millisecond))
 			if proc != nil {
 				proc.stop()
 			}
 			proc = p.supervise(bin)
+			proc.hash = sum
 		}
 
 		select {
@@ -94,13 +102,19 @@ func (p *Project) build(ctx context.Context) (string, error) {
 		return "", err
 	}
 	work := filepath.Join(out, "go.work")
-	content := fmt.Sprintf("go %s\n\nuse (\n\t%s\n\t%s\n)\n", p.m.goVersion, p.dir, p.m.cfg.SDKDir)
+	content := fmt.Sprintf("go %s\n\nuse (\n\t%s\n", p.m.goVersion, p.dir)
+	for _, mod := range p.m.cfg.Modules {
+		content += "\t" + mod + "\n"
+	}
+	content += ")\n"
 	if err := os.WriteFile(work, []byte(content), 0o644); err != nil {
 		return "", err
 	}
 	// New name per build: a running binary is never overwritten.
 	bin := filepath.Join(out, fmt.Sprintf("app-%d", time.Now().UnixNano()))
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
+	// An empty build ID makes the binary depend only on the compiled code,
+	// so e.g. regenerated entities the project doesn't use don't restart it.
+	cmd := exec.CommandContext(ctx, "go", "build", "-ldflags=-buildid=", "-o", bin, ".")
 	cmd.Dir = p.dir
 	cmd.Env = append(os.Environ(), "GOWORK="+work)
 	var stderr bytes.Buffer
@@ -113,6 +127,7 @@ func (p *Project) build(ctx context.Context) (string, error) {
 }
 
 type process struct {
+	hash     [sha256.Size]byte // of the binary
 	stopCh   chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
@@ -209,7 +224,23 @@ func (w *lineWriter) Flush() {
 	}
 }
 
-func goVersion() (string, error) {
+func fileHash(path string) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return sum, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return sum, err
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
+// GoVersion returns the version of the installed Go toolchain, e.g. "1.24.3".
+func GoVersion() (string, error) {
 	out, err := exec.Command("go", "env", "GOVERSION").Output()
 	if err != nil {
 		return "", fmt.Errorf("go toolchain not found: %w", err)

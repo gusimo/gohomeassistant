@@ -51,7 +51,7 @@ func TestHotReload(t *testing.T) {
 	go client.Run(ctx)
 	go bridge.New(client, log).Serve(ctx, socket)
 	sdk, _ := filepath.Abs("../../sdk")
-	mgr, err := project.NewManager(project.Config{Root: root, BuildDir: filepath.Join(tmp, "build"), SDKDir: sdk, Socket: socket, Log: log})
+	mgr, err := project.NewManager(project.Config{Root: root, BuildDir: filepath.Join(tmp, "build"), Modules: []string{sdk}, Socket: socket, Log: log})
 	must(t, err)
 	done := make(chan struct{})
 	go func() { mgr.Run(ctx); close(done) }()

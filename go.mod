@@ -1,6 +1,6 @@
 module github.com/gusimo/gohomeassistant
 
-go 1.24.3
+go 1.24
 
 require (
 	github.com/coder/websocket v1.8.15

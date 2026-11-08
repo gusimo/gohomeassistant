@@ -151,6 +151,9 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			}
 			f.mu.Unlock()
 			ok(out)
+		case "get_services":
+			ok(map[string]any{"light": map[string]any{"turn_on": map[string]any{
+				"fields": map[string]any{}, "target": map[string]any{"entity": []any{map[string]any{"domain": []string{"light"}}}}}}})
 		case "subscribe_events":
 			c.mu.Lock()
 			c.subs[m.ID] = m.EventType

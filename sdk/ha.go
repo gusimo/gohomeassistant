@@ -149,6 +149,7 @@ func Connect() (*Client, error) {
 		}
 	}
 	c.mu.Unlock()
+	defaultClient.CompareAndSwap(nil, c)
 	return c, nil
 }
 

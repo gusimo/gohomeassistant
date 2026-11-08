@@ -23,6 +23,40 @@ GoHomeAssistant host ── one WebSocket ──► Home Assistant
 Projects don't need a `replace` directive for the SDK: the host builds each
 one with a generated `go.work`.
 
+## Typed entities
+
+GoHomeAssistant generates the module `github.com/gusimo/gohomeassistant/ent`
+from your instance (under `$GHA_DATA_DIR/gen/ent`, not inside your projects):
+
+```go
+import (
+	"github.com/gusimo/gohomeassistant/ent"
+	ha "github.com/gusimo/gohomeassistant/sdk"
+)
+
+ha.MustConnect()
+ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
+	if ent.BinarySensor.FrontDoor.IsOn() {
+		ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80, Transition: 2})
+	}
+})
+w, ok := ent.Sensor.Power.Float()                     // numeric state
+ent.Svc.Light.TurnOff(ha.Target{AreaID: []string{"kitchen"}})
+ent.Svc.Notify.MobileAppPhone(ent.NotifyMobileAppPhone{Message: "hi"})
+ha.Default().Run()
+```
+
+- Every entity is a field of its domain (`ent.Light`, `ent.Sensor`, …). Every
+  service that targets that domain is a method on it. Parameters are optional
+  structs, typed from HA's selectors, and zero values are not sent. Use `Extra`
+  for anything else.
+- `ent.Svc.<Domain>.<Service>` lists all services, including those without a
+  target (scripts, notify).
+- Regeneration happens when entities or services are added or removed. All
+  projects are rebuilt, but a process is only restarted if its binary actually
+  changed. If an entity a project uses disappears, the build fails and the
+  previous version keeps running.
+
 ## Run locally
 
 ```sh
@@ -62,7 +96,7 @@ project removal.
 ## Roadmap
 
 1. ✅ Host, SDK, hot reload
-2. Typed entity and service code generation (`ent.Light.Kitchen.TurnOn()`)
+2. ✅ Typed entity and service code generation (`ent.Light.Kitchen.TurnOn()`)
 3. Web UI (React and Monaco, gopls over WebSocket, entity browser, logs), HA login (Ingress or OAuth)
 4. In-UI debugging (Delve DAP)
 5. Git: local first, then remotes

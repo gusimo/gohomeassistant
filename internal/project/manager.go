@@ -22,10 +22,10 @@ import (
 )
 
 type Config struct {
-	Root     string // projects directory
-	BuildDir string // build outputs, outside the projects (keeps git clean)
-	SDKDir   string // local path of the gohomeassistant/sdk module
-	Socket   string // bridge socket, passed to projects as GHA_SOCKET
+	Root     string   // projects directory
+	BuildDir string   // build outputs, outside the projects (keeps git clean)
+	Modules  []string // extra workspace modules (SDK, generated entities)
+	Socket   string   // bridge socket, passed to projects as GHA_SOCKET
 	Log      *slog.Logger
 	// Poll, if > 0, additionally scans for changes at this interval. Needed
 	// where file events don't arrive, e.g. Docker bind mounts on macOS/Windows.
@@ -43,7 +43,7 @@ type Manager struct {
 }
 
 func NewManager(cfg Config) (*Manager, error) {
-	gv, err := goVersion()
+	gv, err := GoVersion()
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +53,16 @@ func NewManager(cfg Config) (*Manager, error) {
 		}
 	}
 	// go.work paths must match the real paths the go tool sees.
-	for _, p := range []*string{&cfg.Root, &cfg.SDKDir} {
-		if *p, err = filepath.EvalSymlinks(*p); err != nil {
+	if cfg.Root, err = filepath.EvalSymlinks(cfg.Root); err != nil {
+		return nil, err
+	}
+	mods := make([]string, len(cfg.Modules))
+	for i, m := range cfg.Modules {
+		if mods[i], err = filepath.EvalSymlinks(m); err != nil {
 			return nil, err
 		}
 	}
+	cfg.Modules = mods
 	return &Manager{cfg: cfg, goVersion: gv, projects: map[string]*Project{}}, nil
 }
 
@@ -163,6 +168,15 @@ func (m *Manager) rescan(ctx context.Context) {
 		m.projects[name] = p
 		m.wg.Add(1)
 		go func() { defer m.wg.Done(); p.loop(pctx) }()
+	}
+}
+
+// TriggerAll rebuilds all projects, e.g. after the entities were regenerated.
+func (m *Manager) TriggerAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.projects {
+		p.Trigger()
 	}
 }
 
