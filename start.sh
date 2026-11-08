@@ -66,7 +66,7 @@ addon)
   out=dist/addon/gohomeassistant
   rm -rf dist/addon
   mkdir -p "$out"
-  cp addon/config.yaml addon/DOCS.md addon/README.md addon/CHANGELOG.md "$out/"
+  cp addon/config.yaml addon/DOCS.md addon/README.md addon/CHANGELOG.md addon/icon.png "$out/"
   git ls-files -z -- Dockerfile .dockerignore go.mod go.sum cmd internal sdk web \
     | tar --null -T - -cf - | tar -xf - -C "$out"
   untracked=$(git ls-files --others --exclude-standard -- cmd internal sdk web)

@@ -58,6 +58,7 @@ body {
   padding: 12px 14px; font-weight: 600; font-size: 14px;
   border-bottom: 1px solid var(--border);
 }
+.gha-logo { width: 22px; height: 22px; flex: none; }
 .gha-conn { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; }
 .gha-conn.gha-ok { background: var(--ok); }
 .gha-conn.gha-down { background: var(--err); }

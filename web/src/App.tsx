@@ -383,6 +383,7 @@ export function App() {
     <div className="gha-app">
       <aside className="gha-sidebar">
         <div className="gha-brand">
+          <img className="gha-logo" src="./icon.png" alt="" />
           GoHomeAssistant
           <span className={`gha-conn ${connected ? 'gha-ok' : 'gha-down'}`} title={connected ? 'connected' : 'disconnected'} />
         </div>
