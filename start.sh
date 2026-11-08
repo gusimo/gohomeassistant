@@ -77,14 +77,16 @@ addon)
   tar -czf dist/gohomeassistant-addon.tar.gz -C dist/addon gohomeassistant
   version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}/\1/p' addon/config.yaml)
   cat <<EOT
-Add-on $version built: $out  (also dist/gohomeassistant-addon.tar.gz)
+App $version built: $out  (also dist/gohomeassistant-addon.tar.gz)
 
-Install it as a local add-on:
-  1. Copy the folder "gohomeassistant" into the "addons" folder of your HA:
-     - Samba add-on: open the "addons" share and copy it there, or
-     - SSH add-on:   scp -r $out root@<your-ha>:/addons/
-  2. HA: Settings > Add-ons > Add-on Store > menu (top right) > Check for updates
-  3. Open "GoHomeAssistant" under "Local add-ons", Install (builds on your HA,
+Install it as a local app:
+  1. Copy the folder "gohomeassistant" into the "local_apps" folder of your HA
+     ("addons" before HA 2026.2):
+     - Samba app:          open the "local_apps" share and copy it there, or
+     - Terminal & SSH app: scp -r $out root@<your-ha>:/local_apps/
+  2. HA: Settings > Apps > Install app > menu (top right) > Check for updates
+     (reload the page if needed)
+  3. Open "GoHomeAssistant" under "Local apps", Install (builds on your HA,
      takes a few minutes), then Start. It appears in the sidebar.
 EOT
   ;;

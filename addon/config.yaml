@@ -26,9 +26,9 @@ homeassistant_api: true
 privileged:
   - SYS_PTRACE
 # Projects live in the add-on config folder: included in backups and
-# reachable via the Samba / SSH / VS Code add-ons (addon_configs/).
+# reachable via the Samba / SSH / VS Code apps (addon_configs/).
 map:
-  - type: addon_config
+  - type: app_config
     read_only: false
 environment:
   GHA_PROJECTS_DIR: /config/projects

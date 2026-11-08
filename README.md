@@ -29,13 +29,19 @@ own login (administrators only).
 ./start.sh addon     # builds dist/addon/gohomeassistant (and a .tar.gz)
 ```
 
-1. Copy the folder `dist/addon/gohomeassistant` into the `addons` folder of
-   your HA: via the Samba add-on (share `addons`), or with the SSH add-on:
-   `scp -r dist/addon/gohomeassistant root@<your-ha>:/addons/`
-2. HA → *Settings* → *Add-ons* → *Add-on Store* → menu (⋮) → *Check for
-   updates*.
-3. Under *Local add-ons*, open **GoHomeAssistant**, *Install* (it is built on
+(Since HA 2026.2, add-ons are called *apps*; the format is the same.)
+
+1. Copy the folder `dist/addon/gohomeassistant` into the `local_apps` folder
+   of your HA: via the Samba app (share `local_apps`), or with the Terminal &
+   SSH app: `scp -r dist/addon/gohomeassistant root@<your-ha>:/local_apps/`
+   (older HA versions: `addons` instead of `local_apps`).
+2. HA → *Settings* → *Apps* → *Install app* (opens the App store) → menu (⋮,
+   top right) → *Check for updates*; reload the page if needed.
+3. Under *Local apps*, open **GoHomeAssistant**, *Install* (it is built on
    your HA, which takes a few minutes), *Start*.
+
+If it doesn't show up, the Supervisor rejected it: *Settings* → *System* →
+*Logs* → menu → *Supervisor*, look for "gohomeassistant".
 
 In the add-on, projects live in `addon_configs/<id>_gohomeassistant/projects`
 (reachable via Samba/SSH, included in backups). It talks to HA through the
