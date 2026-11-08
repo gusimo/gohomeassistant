@@ -7,6 +7,7 @@
 package project
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -182,6 +183,36 @@ func (m *Manager) rescan(ctx context.Context) {
 		m.wg.Add(1)
 		go func() { defer m.wg.Done(); p.loop(pctx) }()
 	}
+}
+
+// Workspace returns the directory of a project and the go.work file that
+// makes the SDK and generated entities available to it (for gopls).
+func (m *Manager) Workspace(name string) (dir, gowork string, err error) {
+	gowork, err = m.writeWork(name)
+	return filepath.Join(m.cfg.Root, name), gowork, err
+}
+
+func (m *Manager) writeWork(name string) (string, error) {
+	out := filepath.Join(m.cfg.BuildDir, name)
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return "", err
+	}
+	work := filepath.Join(out, "go.work")
+	content := fmt.Sprintf("go %s\n\nuse (\n\t%s\n", m.goVersion, filepath.Join(m.cfg.Root, name))
+	for _, mod := range m.cfg.Modules {
+		content += "\t" + mod + "\n"
+	}
+	content += ")\n"
+	_, err := writeIfChanged(work, []byte(content))
+	return work, err
+}
+
+// writeIfChanged avoids touching go.work on every build: gopls watches it.
+func writeIfChanged(path string, data []byte) (bool, error) {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+		return false, nil
+	}
+	return true, os.WriteFile(path, data, 0o644)
 }
 
 // Root returns the (symlink-resolved) projects directory.

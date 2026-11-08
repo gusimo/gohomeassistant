@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -38,10 +39,15 @@ type Server struct {
 	bus       *logbus.Bus
 	log       *slog.Logger
 	goVersion string
+	gopls     string // path, "" if not installed
 }
 
 func New(mgr *project.Manager, bus *logbus.Bus, goVersion string, log *slog.Logger) *Server {
-	return &Server{mgr: mgr, bus: bus, goVersion: goVersion, log: log}
+	gopls, err := exec.LookPath("gopls")
+	if err != nil {
+		log.Warn("gopls not found: no code completion in the editor")
+	}
+	return &Server{mgr: mgr, bus: bus, goVersion: goVersion, log: log, gopls: gopls}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -55,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/projects/{name}/files/{path...}", s.writeFile)
 	mux.HandleFunc("DELETE /api/projects/{name}/files/{path...}", s.deleteFile)
 	mux.HandleFunc("GET /api/events", s.events)
+	mux.HandleFunc("GET /api/projects/{name}/lsp", s.lsp)
 
 	if app, err := fs.Sub(dist, "dist/app"); err == nil {
 		if _, err := fs.Stat(app, "index.html"); err == nil {

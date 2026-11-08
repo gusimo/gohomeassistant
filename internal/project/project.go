@@ -33,6 +33,7 @@ type Project struct {
 // Status is the observable state of a project.
 type Status struct {
 	Name       string    `json:"name"`
+	Dir        string    `json:"dir"` // absolute path, for file:// URIs in the editor
 	Building   bool      `json:"building"`
 	Running    bool      `json:"running"`
 	PID        int       `json:"pid,omitempty"`
@@ -65,7 +66,7 @@ func newProject(m *Manager, name string) *Project {
 		dir:     filepath.Join(m.cfg.Root, name),
 		log:     m.cfg.Log.With("project", name),
 		trigger: make(chan struct{}, 1),
-		status:  Status{Name: name},
+		status:  Status{Name: name, Dir: filepath.Join(m.cfg.Root, name)},
 	}
 }
 
@@ -141,19 +142,11 @@ func (p *Project) loop(ctx context.Context) {
 // build compiles the project to a fresh binary. A go.work file makes the
 // local SDK module available without the project needing replace directives.
 func (p *Project) build(ctx context.Context) (string, error) {
-	out := filepath.Join(p.m.cfg.BuildDir, p.name)
-	if err := os.MkdirAll(out, 0o755); err != nil {
+	work, err := p.m.writeWork(p.name)
+	if err != nil {
 		return "", err
 	}
-	work := filepath.Join(out, "go.work")
-	content := fmt.Sprintf("go %s\n\nuse (\n\t%s\n", p.m.goVersion, p.dir)
-	for _, mod := range p.m.cfg.Modules {
-		content += "\t" + mod + "\n"
-	}
-	content += ")\n"
-	if err := os.WriteFile(work, []byte(content), 0o644); err != nil {
-		return "", err
-	}
+	out := filepath.Dir(work)
 	// New name per build: a running binary is never overwritten.
 	bin := filepath.Join(out, fmt.Sprintf("app-%d", time.Now().UnixNano()))
 	// An empty build ID makes the binary depend only on the compiled code,

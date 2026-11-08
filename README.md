@@ -60,8 +60,11 @@ ha.Default().Run()
 ## Web UI
 
 Open `http://<host>:8099` (`GHA_HTTP_ADDR`). You get projects with live
-status, files, a Monaco editor (⌘S / Ctrl+S saves and hot-reloads, build
-errors show up as markers) and a live log panel. **There is no authentication
+status, files, a Monaco editor and a live log panel. ⌘S / Ctrl+S formats
+(gofmt), saves and hot-reloads, and build errors show up as markers. gopls
+provides completion for your entities and services, hover docs, signature
+help, auto-imports and live diagnostics. gopls runs per open project, so it
+must be in `PATH`; the Docker image includes it. **There is no authentication
 yet**, so only expose it on a trusted network.
 
 Frontend development: `cd web && npm install && npm run dev` starts Vite on
@@ -114,7 +117,7 @@ project removal.
 2. ✅ Typed entity and service code generation (`ent.Light.Kitchen.TurnOn()`)
 3. Web UI
    - ✅ 3a: projects, files, editor, build markers, live logs
-   - 3b: gopls code completion
+   - ✅ 3b: gopls code completion
    - 3c: HA login (Ingress or OAuth), entity browser
 4. In-UI debugging (Delve DAP)
 5. Git: local first, then remotes

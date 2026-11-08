@@ -2,6 +2,7 @@
 
 export type Status = {
   name: string
+  dir: string // absolute path on the server, for file:// URIs
   building: boolean
   running: boolean
   pid?: number

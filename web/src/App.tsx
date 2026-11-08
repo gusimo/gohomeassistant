@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, parseBuildError, subscribe, type FileInfo, type LogEntry, type Status } from './api'
 import { Editor } from './Editor'
 import { Logs } from './Logs'
+import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
+import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 const MAX_LOGS = 5000
 
@@ -47,6 +49,7 @@ export function App() {
   const [onlyProject, setOnlyProject] = useState(stored('gha.onlyProject') === '1')
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
   const current = useRef<Record<string, string>>({}) // current editor content per file
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
 
   // Live logs and status. Log lines are batched per animation frame.
   useEffect(() => {
@@ -108,6 +111,15 @@ export function App() {
   // Selecting a project loads its files and reopens the last file. Wait until
   // the server reported the project: the remembered one may be gone.
   const projectExists = !!project && !!statuses[project]
+  const projectDir = project ? statuses[project]?.dir : undefined
+
+  // One gopls session per selected project.
+  useEffect(() => {
+    if (!project || !projectDir) return
+    registerProviders()
+    const client = connectLSP(project, projectDir)
+    return () => disconnectLSP(client)
+  }, [project, projectDir])
   useEffect(() => {
     if (!project || !projectExists) return
     store('gha.project', project)
@@ -118,9 +130,12 @@ export function App() {
   const save = useCallback(async () => {
     if (!open) return
     const k = key(open.project, open.path)
+    const editor = editorRef.current
+    if (editor) await formatModel(editor) // gofmt via gopls
     const content = current.current[k] ?? saved.current[k]
     try {
       await api.writeFile(open.project, open.path, content)
+      notifySaved(editor?.getModel() ?? null)
       saved.current[k] = content
       setDirty((d) => {
         const n = new Set(d)
@@ -200,18 +215,18 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
+    <div className="gha-app">
+      <aside className="gha-sidebar">
+        <div className="gha-brand">
           GoHomeAssistant
-          <span className={`conn ${connected ? 'ok' : 'down'}`} title={connected ? 'connected' : 'disconnected'} />
+          <span className={`gha-conn ${connected ? 'gha-ok' : 'gha-down'}`} title={connected ? 'connected' : 'disconnected'} />
         </div>
 
-        <div className="section-title">Projects</div>
-        <ul className="list">
+        <div className="gha-section-title">Projects</div>
+        <ul className="gha-list">
           {projects.map((p) => (
-            <li key={p.name} className={p.name === project ? 'active' : ''} onClick={() => setProject(p.name)}>
-              <span className={`dot ${dotClass(p)}`} title={statusText(p)} />
+            <li key={p.name} className={p.name === project ? 'gha-active' : ''} onClick={() => setProject(p.name)}>
+              <span className={`gha-dot ${dotClass(p)}`} title={statusText(p)} />
               {p.name}
             </li>
           ))}
@@ -220,17 +235,17 @@ export function App() {
 
         {projectExists && project && (
           <>
-            <div className="section-title">Files</div>
-            <ul className="list files">
+            <div className="gha-section-title">Files</div>
+            <ul className="gha-list gha-files">
               {files.map((f) => (
                 <li
                   key={f.path}
-                  className={open?.project === project && open.path === f.path ? 'active' : ''}
+                  className={open?.project === project && open.path === f.path ? 'gha-active' : ''}
                   onClick={() => openFile(project, f.path)}
                 >
-                  <span className="file-name">
+                  <span className="gha-file-name">
                     {f.path}
-                    {dirty.has(key(project, f.path)) && <span className="dirty">●</span>}
+                    {dirty.has(key(project, f.path)) && <span className="gha-dirty">●</span>}
                   </span>
                   {f.path !== 'go.mod' && <ConfirmButton label="×" title="Delete file" onConfirm={() => deleteFile(f.path)} />}
                 </li>
@@ -241,17 +256,17 @@ export function App() {
         )}
       </aside>
 
-      <main className="main">
-        <header className="panel-header editor-header">
+      <main className="gha-main">
+        <header className="gha-panel-header gha-editor-header">
           {projectExists && project ? (
             <>
-              <span className="crumb">
+              <span className="gha-crumb">
                 {project}
                 {open && open.project === project && <> / {open.path}</>}
               </span>
-              {status && <span className={`status ${dotClass(status)}`}>{statusText(status)}</span>}
-              <span className="spacer" />
-              <button className="ghost" onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}>
+              {status && <span className={`gha-status ${dotClass(status)}`}>{statusText(status)}</span>}
+              <span className="gha-spacer" />
+              <button className="gha-ghost" onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}>
                 Rebuild
               </button>
               <ConfirmButton label="Delete project" title="Delete project and all its files" onConfirm={deleteProject} />
@@ -260,29 +275,30 @@ export function App() {
               </button>
             </>
           ) : (
-            <span className="crumb">Select or create a project</span>
+            <span className="gha-crumb">Select or create a project</span>
           )}
         </header>
 
         {error && (
-          <div className="error-banner" onClick={() => setError(null)}>
-            {error} <span className="dismiss">dismiss</span>
+          <div className="gha-error-banner" onClick={() => setError(null)}>
+            {error} <span className="gha-dismiss">dismiss</span>
           </div>
         )}
 
-        <div className="editor">
+        <div className="gha-editor">
           {projectExists && open && open.project === project ? (
             <Editor
-              modelPath={key(open.project, open.path)}
+              modelPath={projectDir ? fileURI(projectDir, open.path) : key(open.project, open.path)}
               filePath={open.path}
               initialValue={open.initial}
               problems={problems}
               dark={dark}
               onChange={onChange}
               onSave={save}
+              onEditor={(e) => (editorRef.current = e)}
             />
           ) : (
-            <div className="empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
+            <div className="gha-empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
           )}
         </div>
 
@@ -302,10 +318,10 @@ export function App() {
 }
 
 function dotClass(s: Status) {
-  if (s.building) return 'building'
-  if (s.buildError) return 'failed'
-  if (s.running) return 'running'
-  return 'stopped'
+  if (s.building) return 'gha-building'
+  if (s.buildError) return 'gha-failed'
+  if (s.running) return 'gha-running'
+  return 'gha-stopped'
 }
 
 function statusText(s: Status) {
@@ -321,7 +337,7 @@ function InlineInput({ placeholder, pattern, onSubmit }: { placeholder: string; 
   const valid = pattern.test(value)
   return (
     <input
-      className={`inline-input${value && !valid ? ' invalid' : ''}`}
+      className={`gha-inline-input${value && !valid ? ' gha-invalid' : ''}`}
       placeholder={placeholder}
       value={value}
       onChange={(e) => setValue(e.target.value.trim())}
@@ -345,7 +361,7 @@ function ConfirmButton({ label, title, onConfirm }: { label: string; title: stri
   }, [armed])
   return (
     <button
-      className={`ghost danger${armed ? ' armed' : ''}`}
+      className={`gha-ghost gha-danger${armed ? ' gha-armed' : ''}`}
       title={title}
       onClick={(e) => {
         e.stopPropagation()

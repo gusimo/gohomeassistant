@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react'
 import MonacoEditor, { loader, type OnMount } from '@monaco-editor/react'
 // Bundle Monaco locally (no CDN): the UI must work offline and behind Ingress.
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+// editor.api is the bare core; this adds the contributions (suggest widget,
+// hover, parameter hints, find, folding, ...).
+import 'monaco-editor/esm/vs/editor/editor.all.js'
 import 'monaco-editor/esm/vs/basic-languages/go/go.contribution'
 import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution'
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
@@ -22,15 +25,17 @@ type Props = {
   dark: boolean
   onChange: (value: string) => void
   onSave: () => void
+  onEditor: (editor: monaco.editor.IStandaloneCodeEditor) => void
 }
 
-export function Editor({ modelPath, filePath, initialValue, problems, dark, onChange, onSave }: Props) {
+export function Editor({ modelPath, filePath, initialValue, problems, dark, onChange, onSave, onEditor }: Props) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const onSaveRef = useRef(onSave)
   onSaveRef.current = onSave
 
   const onMount: OnMount = (editor, m) => {
     editorRef.current = editor
+    onEditor(editor)
     editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => onSaveRef.current())
   }
 

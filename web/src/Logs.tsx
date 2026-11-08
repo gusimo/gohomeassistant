@@ -21,18 +21,18 @@ export function Logs({ logs, project, onlyProject, setOnlyProject, onClear }: Pr
   }, [shown.length])
 
   return (
-    <section className="logs">
-      <header className="panel-header">
+    <section className="gha-logs">
+      <header className="gha-panel-header">
         <span>Logs</span>
-        <label className="check">
+        <label className="gha-check">
           <input type="checkbox" checked={onlyProject} disabled={!project} onChange={(e) => setOnlyProject(e.target.checked)} />
           only {project ?? 'selected project'}
         </label>
-        <span className="spacer" />
-        <button className="ghost" onClick={onClear}>Clear</button>
+        <span className="gha-spacer" />
+        <button className="gha-ghost" onClick={onClear}>Clear</button>
       </header>
       <div
-        className="log-lines"
+        className="gha-log-lines"
         ref={ref}
         onScroll={(e) => {
           const el = e.currentTarget
@@ -42,7 +42,7 @@ export function Logs({ logs, project, onlyProject, setOnlyProject, onClear }: Pr
         {shown.map((l) => (
           <LogLine key={l.seq} entry={l} />
         ))}
-        {shown.length === 0 && <div className="empty">No log output yet.</div>}
+        {shown.length === 0 && <div className="gha-empty">No log output yet.</div>}
       </div>
     </section>
   )
@@ -52,15 +52,15 @@ function LogLine({ entry: l }: { entry: LogEntry }) {
   const { err, ...attrs } = l.attrs ?? {}
   const t = new Date(l.time).toLocaleTimeString([], { hour12: false })
   return (
-    <div className={`log-line level-${l.level.toLowerCase()}${l.output ? ' output' : ''}`}>
-      <span className="log-time">{t}</span>
-      <span className="log-project">{l.project ?? 'host'}</span>
-      <span className="log-msg">
+    <div className={`gha-log-line gha-level-${l.level.toLowerCase()}${l.output ? ' gha-output' : ''}`}>
+      <span className="gha-log-time">{t}</span>
+      <span className="gha-log-project">{l.project ?? 'host'}</span>
+      <span className="gha-log-msg">
         {l.msg}
         {Object.entries(attrs).map(([k, v]) => (
-          <span key={k} className="log-attr"> {k}={v}</span>
+          <span key={k} className="gha-log-attr"> {k}={v}</span>
         ))}
-        {err && <pre className="log-err">{err}</pre>}
+        {err && <pre className="gha-log-err">{err}</pre>}
       </span>
     </div>
   )

@@ -12,11 +12,14 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/internal/server/dist/app ./internal/server/dist/app
 RUN CGO_ENABLED=0 go build -o /gohomeassistant ./cmd/gohomeassistant
+# gopls powers code completion in the editor.
+RUN CGO_ENABLED=0 GOBIN=/out go install golang.org/x/tools/gopls@v0.20.0
 
 # The runtime image keeps the Go toolchain: projects are compiled in place.
 FROM golang:1.24-alpine
 RUN apk add --no-cache git
 COPY --from=build /gohomeassistant /usr/local/bin/gohomeassistant
+COPY --from=build /out/gopls /usr/local/bin/gopls
 COPY sdk /opt/gohomeassistant/sdk
 # Persist build and module caches across container restarts.
 ENV GOCACHE=/data/gohomeassistant/cache \
