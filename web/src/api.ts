@@ -24,8 +24,22 @@ export type LogEntry = {
 
 export type FileInfo = { path: string; size: number }
 
+export type EntityState = {
+  entity_id: string
+  state: string
+  attributes: Record<string, unknown> & { friendly_name?: string; unit_of_measurement?: string }
+  last_changed: string
+  ref: string // Go expression, e.g. "ent.Light.Kitchen"; "" before the first generation
+}
+
+export type Me = { user: { id: string; name: string; admin: boolean }; mode: 'none' | 'ingress' | 'ha' }
+
 async function req(method: string, url: string, body?: BodyInit): Promise<Response> {
   const res = await fetch(url, { method, body })
+  if (res.status === 401) {
+    location.href = './auth/login' // session expired
+    throw new Error('not logged in')
+  }
   if (!res.ok) throw new Error((await res.text()).trim() || `${res.status} ${res.statusText}`)
   return res
 }
@@ -42,6 +56,9 @@ export const api = {
   createProject: (name: string) => req('POST', './api/projects', JSON.stringify({ name })),
   deleteProject: (name: string) => req('DELETE', `./api/projects/${encodeURIComponent(name)}`),
   rebuild: (name: string) => req('POST', `./api/projects/${encodeURIComponent(name)}/build`),
+  entities: async (): Promise<EntityState[]> => (await req('GET', './api/entities')).json(),
+  me: async (): Promise<Me> => (await req('GET', './api/me')).json(),
+  logout: () => req('POST', './auth/logout'),
 }
 
 // subscribe streams logs and status changes. After a reconnect the server

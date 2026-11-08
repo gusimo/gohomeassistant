@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -18,9 +19,12 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/gusimo/gohomeassistant/internal/auth"
+	"github.com/gusimo/gohomeassistant/internal/ha"
 	"github.com/gusimo/gohomeassistant/internal/logbus"
 	"github.com/gusimo/gohomeassistant/internal/project"
 )
@@ -40,6 +44,14 @@ type Server struct {
 	log       *slog.Logger
 	goVersion string
 	gopls     string // path, "" if not installed
+
+	// SkipOriginCheck disables the WebSocket origin check (HA Ingress).
+	SkipOriginCheck bool
+	// Auth protects all routes; nil means no authentication (tests).
+	Auth *auth.Auth
+	// HA and Refs power the entity browser (optional).
+	HA   *ha.Client
+	Refs func() map[string]string
 }
 
 func New(mgr *project.Manager, bus *logbus.Bus, goVersion string, log *slog.Logger) *Server {
@@ -52,6 +64,16 @@ func New(mgr *project.Manager, bus *logbus.Bus, goVersion string, log *slog.Logg
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.Auth == nil {
+		s.routes(mux)
+		return mux
+	}
+	s.Auth.Register(mux)
+	s.routes(mux)
+	return s.Auth.Wrap(mux)
+}
+
+func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("DELETE /api/projects/{name}", s.deleteProject)
@@ -62,17 +84,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/projects/{name}/files/{path...}", s.deleteFile)
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("GET /api/projects/{name}/lsp", s.lsp)
+	mux.HandleFunc("GET /api/entities", s.entities)
 
 	if app, err := fs.Sub(dist, "dist/app"); err == nil {
 		if _, err := fs.Stat(app, "index.html"); err == nil {
 			mux.Handle("GET /", http.FileServerFS(app))
-			return mux
+			return
 		}
 	}
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "UI not built: run `npm run build` in web/", http.StatusNotFound)
 	})
-	return mux
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -339,6 +361,44 @@ func (s *Server) filePath(w http.ResponseWriter, r *http.Request) (string, bool)
 		}
 	}
 	return filepath.Join(dir, filepath.FromSlash(clean)), true
+}
+
+// entities returns all current states, each with the Go expression of the
+// generated entity (e.g. "ent.Light.Kitchen").
+func (s *Server) entities(w http.ResponseWriter, r *http.Request) {
+	if s.HA == nil {
+		http.Error(w, "not available", http.StatusNotImplemented)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	raw, err := s.HA.Call(ctx, map[string]any{"type": "get_states"})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	var res struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		httpError(w, err)
+		return
+	}
+	var refs map[string]string
+	if s.Refs != nil {
+		refs = s.Refs()
+	}
+	for _, st := range res.Result {
+		id, _ := st["entity_id"].(string)
+		st["ref"] = refs[id]
+		delete(st, "context")
+	}
+	sort.Slice(res.Result, func(i, j int) bool {
+		a, _ := res.Result[i]["entity_id"].(string)
+		b, _ := res.Result[j]["entity_id"].(string)
+		return a < b
+	})
+	writeJSON(w, res.Result)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

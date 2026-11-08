@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, parseBuildError, subscribe, type FileInfo, type LogEntry, type Status } from './api'
+import { api, parseBuildError, subscribe, type FileInfo, type LogEntry, type Me, type Status } from './api'
 import { Editor } from './Editor'
+import { Entities } from './Entities'
 import { Logs } from './Logs'
 import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
 import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
@@ -47,9 +48,29 @@ export function App() {
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [onlyProject, setOnlyProject] = useState(stored('gha.onlyProject') === '1')
+  const [showEntities, setShowEntities] = useState(stored('gha.entities') === '1')
+  const [me, setMe] = useState<Me | null>(null)
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
   const current = useRef<Record<string, string>>({}) // current editor content per file
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+
+  useEffect(() => {
+    api.me().then(setMe, () => {})
+  }, [])
+
+  const toggleEntities = (v: boolean) => {
+    setShowEntities(v)
+    store('gha.entities', v ? '1' : '0')
+  }
+
+  // Insert text at the cursor of the open file.
+  const insert = (text: string) => {
+    const ed = editorRef.current
+    const sel = ed?.getSelection()
+    if (!ed || !sel) return
+    ed.executeEdits('entities', [{ range: sel, text, forceMoveMarkers: true }])
+    ed.focus()
+  }
 
   // Live logs and status. Log lines are batched per animation frame.
   useEffect(() => {
@@ -221,6 +242,16 @@ export function App() {
           GoHomeAssistant
           <span className={`gha-conn ${connected ? 'gha-ok' : 'gha-down'}`} title={connected ? 'connected' : 'disconnected'} />
         </div>
+        {me && (
+          <div className="gha-user">
+            <span title={`auth: ${me.mode}`}>{me.user.name}</span>
+            {me.mode === 'ha' && (
+              <button className="gha-ghost gha-small" onClick={() => api.logout().then(() => location.reload())}>
+                Log out
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="gha-section-title">Projects</div>
         <ul className="gha-list">
@@ -266,6 +297,9 @@ export function App() {
               </span>
               {status && <span className={`gha-status ${dotClass(status)}`}>{statusText(status)}</span>}
               <span className="gha-spacer" />
+              <button className={`gha-ghost${showEntities ? ' gha-toggled' : ''}`} onClick={() => toggleEntities(!showEntities)}>
+                Entities
+              </button>
               <button className="gha-ghost" onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}>
                 Rebuild
               </button>
@@ -285,6 +319,7 @@ export function App() {
           </div>
         )}
 
+        <div className="gha-editor-row">
         <div className="gha-editor">
           {projectExists && open && open.project === project ? (
             <Editor
@@ -300,6 +335,8 @@ export function App() {
           ) : (
             <div className="gha-empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
           )}
+        </div>
+        {showEntities && <Entities onInsert={insert} onClose={() => toggleEntities(false)} />}
         </div>
 
         <Logs

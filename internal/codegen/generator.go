@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gusimo/gohomeassistant/internal/ha"
@@ -24,6 +25,16 @@ type Generator struct {
 
 	kick       chan struct{}
 	subscribed map[string]bool // event types already subscribed
+
+	mu   sync.Mutex
+	refs map[string]string
+}
+
+// Refs returns entity ID -> Go expression of the last generation.
+func (g *Generator) Refs() map[string]string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.refs
 }
 
 // EnsureModule writes go.mod and a stub ent.go if they don't exist yet, so
@@ -142,10 +153,13 @@ func (g *Generator) generate(ctx context.Context) error {
 	if err := g.call(ctx, "get_services", &services); err != nil {
 		return err
 	}
-	src, err := Generate(states, services)
+	src, refs, err := Generate(states, services)
 	if err != nil {
 		return err
 	}
+	g.mu.Lock()
+	g.refs = refs
+	g.mu.Unlock()
 	changed, err := writeIfChanged(filepath.Join(g.Dir, "ent.go"), src)
 	if err != nil || !changed {
 		return err

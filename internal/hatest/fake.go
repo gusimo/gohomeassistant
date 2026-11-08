@@ -14,6 +14,12 @@ import (
 
 const Token = "test-token"
 
+// OAuth codes accepted by the fake's /auth/token, and the users they log in.
+const (
+	AdminCode = "admin-code"
+	UserCode  = "user-code"
+)
+
 type ServiceCall struct {
 	Domain, Service string
 	Target          map[string]any
@@ -24,9 +30,17 @@ type Fake struct {
 	srv   *httptest.Server
 	Calls chan ServiceCall
 
-	mu     sync.Mutex
-	states map[string]map[string]any
-	conns  map[*fconn]struct{}
+	mu      sync.Mutex
+	states  map[string]map[string]any
+	conns   map[*fconn]struct{}
+	revoked []string // refresh tokens revoked via /auth/revoke
+}
+
+// Revoked returns the refresh tokens revoked via /auth/revoke.
+func (f *Fake) Revoked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.revoked...)
 }
 
 type fconn struct {
@@ -42,7 +56,10 @@ func New() *Fake {
 }
 
 func (f *Fake) URL() string { return "ws" + strings.TrimPrefix(f.srv.URL, "http") + "/api/websocket" }
-func (f *Fake) Close()      { f.DropConnections(); f.srv.Close() }
+
+// HTTPURL is the base URL, as used for OAuth.
+func (f *Fake) HTTPURL() string { return f.srv.URL }
+func (f *Fake) Close()          { f.DropConnections(); f.srv.Close() }
 
 // SetState sets an entity state and fires state_changed.
 func (f *Fake) SetState(entityID, state string) {
@@ -101,7 +118,31 @@ func (c *fconn) send(v any) {
 	_ = c.ws.Write(context.Background(), websocket.MessageText, b)
 }
 
+// access tokens issued by /auth/token -> user
+var oauthUsers = map[string]map[string]any{
+	"access-admin": {"id": "u1", "name": "Admin", "is_admin": true, "is_owner": false},
+	"access-user":  {"id": "u2", "name": "Kid", "is_admin": false, "is_owner": false},
+}
+
 func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/auth/token":
+		r.ParseForm()
+		access := map[string]string{AdminCode: "access-admin", UserCode: "access-user"}[r.Form.Get("code")]
+		if r.Form.Get("grant_type") != "authorization_code" || access == "" || r.Form.Get("client_id") == "" {
+			http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": "refresh-" + access, "expires_in": 1800, "token_type": "Bearer"})
+		return
+	case "/auth/revoke":
+		r.ParseForm()
+		f.mu.Lock()
+		f.revoked = append(f.revoked, r.Form.Get("token"))
+		f.mu.Unlock()
+		return
+	}
 	ws, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -114,7 +155,12 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 	var auth struct {
 		AccessToken string `json:"access_token"`
 	}
-	if _, b, err := ws.Read(ctx); err != nil || json.Unmarshal(b, &auth) != nil || auth.AccessToken != Token {
+	_, b, err := ws.Read(ctx)
+	if err == nil {
+		err = json.Unmarshal(b, &auth)
+	}
+	user := oauthUsers[auth.AccessToken]
+	if err != nil || (auth.AccessToken != Token && user == nil) {
 		c.send(map[string]any{"type": "auth_invalid", "message": "bad token"})
 		return
 	}
@@ -151,6 +197,8 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 			}
 			f.mu.Unlock()
 			ok(out)
+		case "auth/current_user":
+			ok(user)
 		case "get_services":
 			ok(map[string]any{"light": map[string]any{"turn_on": map[string]any{
 				"fields": map[string]any{}, "target": map[string]any{"entity": []any{map[string]any{"domain": []string{"light"}}}}}}})

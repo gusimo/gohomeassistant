@@ -54,11 +54,30 @@ func generateFixture(t *testing.T) string {
 	if err := json.Unmarshal([]byte(servicesJSON), &services); err != nil {
 		t.Fatal(err)
 	}
-	src, err := Generate(states, services)
+	src, _, err := Generate(states, services)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(src)
+}
+
+func TestRefs(t *testing.T) {
+	var states []State
+	json.Unmarshal([]byte(statesJSON), &states)
+	_, refs, err := Generate(states, Services{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"light.kitchen":            "ent.Light.Kitchen",
+		"sensor.power_":            "ent.Sensor.Power_2",
+		"light.0x00158d00086f44ec": "ent.Light.X0x00158d00086f44ec",
+		"media_player.living_room": "ent.MediaPlayer.LivingRoom",
+	} {
+		if refs[id] != want {
+			t.Errorf("%s: got %q, want %q", id, refs[id], want)
+		}
+	}
 }
 
 func TestGenerateAPI(t *testing.T) {

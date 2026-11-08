@@ -31,7 +31,9 @@ func (s *Server) lsp(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err)
 		return
 	}
-	conn, err := websocket.Accept(w, r, nil)
+	// Under Ingress the browser's Origin is HA's host, not ours; only the
+	// Supervisor can reach us there.
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: s.SkipOriginCheck})
 	if err != nil {
 		return
 	}

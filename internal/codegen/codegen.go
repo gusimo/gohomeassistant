@@ -52,16 +52,17 @@ type Field struct {
 // Services is the get_services result: domain -> service -> description.
 type Services map[string]map[string]Service
 
-// Generate returns the gofmt'ed source of package ent.
-func Generate(states []State, services Services) ([]byte, error) {
-	g := &gen{top: names{}}
+// Generate returns the gofmt'ed source of package ent and, per entity ID,
+// the Go expression referring to it (e.g. "ent.Light.Kitchen").
+func Generate(states []State, services Services) ([]byte, map[string]string, error) {
+	g := &gen{top: names{}, refs: map[string]string{}}
 	g.top.reserve("Svc", "first")
 	g.emit(states, services)
 	src, err := format.Source(g.buf.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("format generated code: %w\n%s", err, g.buf.String())
+		return nil, nil, fmt.Errorf("format generated code: %w\n%s", err, g.buf.String())
 	}
-	return src, nil
+	return src, g.refs, nil
 }
 
 // Stub is the package written before the first successful generation.
@@ -70,8 +71,9 @@ func Stub() []byte {
 }
 
 type gen struct {
-	buf bytes.Buffer
-	top names
+	buf  bytes.Buffer
+	top  names
+	refs map[string]string
 }
 
 func (g *gen) p(format string, args ...any) { fmt.Fprintf(&g.buf, format, args...) }
@@ -152,6 +154,7 @@ func (g *gen) emit(states []State, services Services) {
 		for _, e := range ents {
 			_, obj, _ := strings.Cut(e.EntityID, ".")
 			f := fields.add(goName(obj))
+			g.refs[e.EntityID] = "ent." + domainVar[d] + "." + f
 			g.p("\t// %s is %s.\n\t%s %s\n", f, describeEntity(e), f, entityType[d])
 			inits = append(inits, fmt.Sprintf("\t%s: %s{ha.Entity{ID: %q}},\n", f, entityType[d], e.EntityID))
 		}

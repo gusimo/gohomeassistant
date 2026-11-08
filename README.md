@@ -64,8 +64,26 @@ status, files, a Monaco editor and a live log panel. ⌘S / Ctrl+S formats
 (gofmt), saves and hot-reloads, and build errors show up as markers. gopls
 provides completion for your entities and services, hover docs, signature
 help, auto-imports and live diagnostics. gopls runs per open project, so it
-must be in `PATH`; the Docker image includes it. **There is no authentication
-yet**, so only expose it on a trusted network.
+must be in `PATH`; the Docker image includes it. An entity browser
+(search, live state, attributes) inserts or copies the matching Go
+expression, e.g. `ent.Sensor.Power`.
+
+### Login
+
+The UI can run code with full access to HA, so only **HA administrators** get
+in:
+
+- **Add-on:** through HA Ingress (HA's own login). Direct requests that don't
+  come from the Supervisor are rejected.
+- **Standalone (default `GHA_AUTH=ha`):** you log in with your HA account via
+  HA's OAuth flow. GoHomeAssistant checks `is_admin`, revokes the HA token it
+  received and keeps its own session cookie (in memory, so restarting means
+  logging in again).
+  - `GHA_HA_PUBLIC_URL`: HA's URL as your browser sees it, if different from
+    `HA_URL` (e.g. `HA_URL=http://homeassistant:8123` inside a Docker network).
+  - `GHA_PUBLIC_URL`: GoHomeAssistant's own URL, if it can't be derived from
+    the request (e.g. behind a reverse proxy).
+- **`GHA_AUTH=none`:** no authentication, for local development only.
 
 Frontend development: `cd web && npm install && npm run dev` starts Vite on
 :5173 and proxies `/api` to a running GoHomeAssistant on :8099.

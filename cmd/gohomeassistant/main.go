@@ -9,6 +9,10 @@
 //	GHA_DATA_DIR      default /data/gohomeassistant (build outputs)
 //	GHA_SDK_DIR       default /opt/gohomeassistant/sdk
 //	GHA_HTTP_ADDR     default :8099 (web UI)
+//	GHA_AUTH          standalone: "ha" (default, log in with HA, admins only)
+//	                  or "none" (no authentication, development only)
+//	GHA_PUBLIC_URL    optional: URL the browser uses for GoHomeAssistant
+//	GHA_HA_PUBLIC_URL optional: URL the browser uses for HA, if not HA_URL
 //	GHA_WATCH_POLL    e.g. 1s: also poll for file changes (needed for Docker
 //	                  bind mounts on macOS/Windows, where file events don't arrive)
 package main
@@ -26,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gusimo/gohomeassistant/internal/auth"
 	"github.com/gusimo/gohomeassistant/internal/bridge"
 	"github.com/gusimo/gohomeassistant/internal/codegen"
 	"github.com/gusimo/gohomeassistant/internal/ha"
@@ -105,8 +110,16 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	gen.OnChange = mgr.TriggerAll
 	go gen.Run(ctx)
 
+	authn, err := authConfig(log)
+	if err != nil {
+		return err
+	}
+	web := server.New(mgr, bus, goVersion, log)
+	web.Auth = authn
+	web.SkipOriginCheck = authn.Mode == auth.Ingress
+	web.HA, web.Refs = client, gen.Refs
 	addr := env("GHA_HTTP_ADDR", ":8099")
-	srv := &http.Server{Addr: addr, Handler: server.New(mgr, bus, goVersion, log).Handler()}
+	srv := &http.Server{Addr: addr, Handler: web.Handler()}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("http server", "err", err)
@@ -114,10 +127,33 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 		}
 	}()
 	go func() { <-ctx.Done(); srv.Close() }()
-	log.Warn("web UI has no authentication yet: only expose it on a trusted network", "addr", addr)
+	log.Info("web UI", "addr", addr, "auth", authn.Mode)
 
 	log.Info("gohomeassistant started", "projects", projectsDir)
 	return mgr.Run(ctx)
+}
+
+// authConfig picks the authentication mode: Ingress inside the add-on,
+// otherwise HA login unless explicitly disabled.
+func authConfig(log *slog.Logger) (*auth.Auth, error) {
+	a := &auth.Auth{
+		HAURL:       os.Getenv("HA_URL"),
+		HAPublicURL: os.Getenv("GHA_HA_PUBLIC_URL"),
+		PublicURL:   os.Getenv("GHA_PUBLIC_URL"),
+		Log:         log,
+	}
+	switch mode := os.Getenv("GHA_AUTH"); {
+	case os.Getenv("SUPERVISOR_TOKEN") != "":
+		a.Mode = auth.Ingress
+	case mode == "" || mode == "ha":
+		a.Mode = auth.HA
+	case mode == "none":
+		a.Mode = auth.None
+		log.Warn("GHA_AUTH=none: the web UI has NO authentication; anyone who can reach it controls Home Assistant")
+	default:
+		return nil, fmt.Errorf("GHA_AUTH: unknown mode %q (use ha or none)", mode)
+	}
+	return a, nil
 }
 
 // haEndpoint returns the WebSocket URL and token, preferring the add-on

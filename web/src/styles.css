@@ -122,7 +122,8 @@ button.gha-danger.gha-armed { color: var(--err); border-color: var(--err); }
 }
 .gha-dismiss { float: right; text-decoration: underline; }
 
-.gha-editor { flex: 1; min-height: 0; }
+.gha-editor-row { flex: 1; min-height: 0; display: flex; }
+.gha-editor { flex: 1; min-height: 0; min-width: 0; }
 .gha-empty { padding: 24px; color: var(--muted); }
 
 /* Logs */
@@ -139,3 +140,40 @@ button.gha-danger.gha-armed { color: var(--err); border-color: var(--err); }
 .gha-log-line.gha-level-warn .gha-log-msg { color: var(--warn); }
 .gha-log-line.gha-level-error .gha-log-msg { color: var(--err); }
 .gha-log-err { margin: 2px 0 4px; color: var(--err); font: inherit; white-space: pre-wrap; }
+
+/* User */
+.gha-user {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; font-size: 12px; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.gha-user span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.gha-small { padding: 1px 8px; font-size: 12px; }
+button.gha-toggled { color: var(--text); background: var(--active); }
+.gha-muted { color: var(--muted); }
+
+/* Entity browser */
+.gha-entities {
+  width: 360px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--border); background: var(--bg-side);
+}
+.gha-search {
+  margin: 8px; padding: 6px 8px; font: inherit; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+}
+.gha-search:focus { outline: 1px solid var(--accent); }
+.gha-entity-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+.gha-entity-list li { border-bottom: 1px solid var(--border); }
+.gha-entity-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; }
+.gha-entity-row:hover, .gha-open .gha-entity-row { background: var(--hover); }
+.gha-entity-names { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gha-entity-name, .gha-entity-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-entity-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.gha-entity-state { font-family: var(--mono); font-size: 12px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-entity-detail { padding: 6px 10px 10px; background: var(--bg); }
+.gha-entity-actions { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.gha-entity-actions code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-attrs { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.gha-attrs th { text-align: left; font-weight: normal; color: var(--muted); width: 40%; padding: 2px 6px 2px 0; vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
+.gha-attrs td { font-family: var(--mono); padding: 2px 0; word-break: break-word; }
+.gha-more { padding: 8px 10px; color: var(--muted); font-size: 12px; }
