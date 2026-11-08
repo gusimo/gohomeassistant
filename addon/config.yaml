@@ -1,7 +1,7 @@
 # Home Assistant add-on definition. `./start.sh addon` assembles an
 # installable add-on folder from this and the sources.
 name: GoHomeAssistant
-version: "0.1.0"
+version: "0.1.1"
 slug: gohomeassistant
 description: Write automations in Go, with a web IDE, hot reload, debugger and git
 url: https://github.com/gusimo/gohomeassistant
