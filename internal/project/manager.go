@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ type Config struct {
 	// Poll, if > 0, additionally scans for changes at this interval. Needed
 	// where file events don't arrive, e.g. Docker bind mounts on macOS/Windows.
 	Poll time.Duration
+	// OnStatus, if set, is called on every project status change.
+	OnStatus func(Status)
 }
 
 type Manager struct {
@@ -40,6 +43,7 @@ type Manager struct {
 	projects map[string]*Project
 	watcher  *fsnotify.Watcher
 	wg       sync.WaitGroup
+	ctx      context.Context // of Run, for projects started by Rescan
 }
 
 func NewManager(cfg Config) (*Manager, error) {
@@ -74,7 +78,10 @@ func (m *Manager) Run(ctx context.Context) error {
 		return err
 	}
 	defer w.Close()
+	m.mu.Lock()
 	m.watcher = w
+	m.ctx = ctx
+	m.mu.Unlock()
 	if err := w.Add(m.cfg.Root); err != nil {
 		return err
 	}
@@ -153,8 +160,14 @@ func (m *Manager) rescan(ctx context.Context) {
 	for name, p := range m.projects {
 		if !found[name] {
 			m.cfg.Log.Info("project removed", "project", name)
+			p.mu.Lock()
+			p.removed = true
+			p.mu.Unlock()
 			p.cancel()
 			delete(m.projects, name)
+			if m.cfg.OnStatus != nil {
+				m.cfg.OnStatus(Status{Name: name, Removed: true})
+			}
 		}
 	}
 	for name := range found {
@@ -169,6 +182,42 @@ func (m *Manager) rescan(ctx context.Context) {
 		m.wg.Add(1)
 		go func() { defer m.wg.Done(); p.loop(pctx) }()
 	}
+}
+
+// Root returns the (symlink-resolved) projects directory.
+func (m *Manager) Root() string { return m.cfg.Root }
+
+// Statuses returns the status of all projects, sorted by name.
+func (m *Manager) Statuses() []Status {
+	m.mu.Lock()
+	out := make([]Status, 0, len(m.projects))
+	for _, p := range m.projects {
+		out = append(out, p.Status())
+	}
+	m.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Rescan picks up added or removed projects immediately.
+func (m *Manager) Rescan() {
+	m.mu.Lock()
+	ctx := m.ctx
+	m.mu.Unlock()
+	if ctx != nil {
+		m.rescan(ctx)
+	}
+}
+
+// Trigger rebuilds one project. It returns false if the project is unknown.
+func (m *Manager) Trigger(name string) bool {
+	m.mu.Lock()
+	p := m.projects[name]
+	m.mu.Unlock()
+	if p != nil {
+		p.Trigger()
+	}
+	return p != nil
 }
 
 // TriggerAll rebuilds all projects, e.g. after the entities were regenerated.

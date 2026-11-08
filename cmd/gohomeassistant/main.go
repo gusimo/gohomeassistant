@@ -8,6 +8,7 @@
 //	GHA_PROJECTS_DIR  default /data/projects
 //	GHA_DATA_DIR      default /data/gohomeassistant (build outputs)
 //	GHA_SDK_DIR       default /opt/gohomeassistant/sdk
+//	GHA_HTTP_ADDR     default :8099 (web UI)
 //	GHA_WATCH_POLL    e.g. 1s: also poll for file changes (needed for Docker
 //	                  bind mounts on macOS/Windows, where file events don't arrive)
 package main
@@ -16,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -27,18 +29,21 @@ import (
 	"github.com/gusimo/gohomeassistant/internal/bridge"
 	"github.com/gusimo/gohomeassistant/internal/codegen"
 	"github.com/gusimo/gohomeassistant/internal/ha"
+	"github.com/gusimo/gohomeassistant/internal/logbus"
 	"github.com/gusimo/gohomeassistant/internal/project"
+	"github.com/gusimo/gohomeassistant/internal/server"
 )
 
 func main() {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(log); err != nil {
+	bus := logbus.New(5000)
+	log := slog.New(logbus.NewHandler(slog.NewTextHandler(os.Stderr, nil), bus))
+	if err := run(log, bus); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(log *slog.Logger, bus *logbus.Bus) error {
 	wsURL, token, err := haEndpoint()
 	if err != nil {
 		return err
@@ -92,12 +97,24 @@ func run(log *slog.Logger) error {
 		Socket:   socket,
 		Log:      log,
 		Poll:     poll,
+		OnStatus: func(st project.Status) { bus.PublishStatus(st) },
 	})
 	if err != nil {
 		return err
 	}
 	gen.OnChange = mgr.TriggerAll
 	go gen.Run(ctx)
+
+	addr := env("GHA_HTTP_ADDR", ":8099")
+	srv := &http.Server{Addr: addr, Handler: server.New(mgr, bus, goVersion, log).Handler()}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("http server", "err", err)
+			stop()
+		}
+	}()
+	go func() { <-ctx.Done(); srv.Close() }()
+	log.Warn("web UI has no authentication yet: only expose it on a trusted network", "addr", addr)
 
 	log.Info("gohomeassistant started", "projects", projectsDir)
 	return mgr.Run(ctx)

@@ -1,0 +1,75 @@
+import { useEffect, useRef } from 'react'
+import MonacoEditor, { loader, type OnMount } from '@monaco-editor/react'
+// Bundle Monaco locally (no CDN): the UI must work offline and behind Ingress.
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import 'monaco-editor/esm/vs/basic-languages/go/go.contribution'
+import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution'
+import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import type { BuildProblem } from './api'
+
+self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
+loader.config({ monaco })
+
+const language = (path: string) =>
+  path.endsWith('.go') ? 'go' : path.endsWith('.md') ? 'markdown' : /\.ya?ml$/.test(path) ? 'yaml' : 'plaintext'
+
+type Props = {
+  modelPath: string // unique per project+file; Monaco keeps one model (and undo history) per path
+  filePath: string
+  initialValue: string
+  problems: BuildProblem[]
+  dark: boolean
+  onChange: (value: string) => void
+  onSave: () => void
+}
+
+export function Editor({ modelPath, filePath, initialValue, problems, dark, onChange, onSave }: Props) {
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+
+  const onMount: OnMount = (editor, m) => {
+    editorRef.current = editor
+    editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => onSaveRef.current())
+  }
+
+  // Show build errors of this file as markers.
+  useEffect(() => {
+    const model = editorRef.current?.getModel()
+    if (!model) return
+    monaco.editor.setModelMarkers(
+      model,
+      'build',
+      problems
+        .filter((p) => p.file === filePath)
+        .map((p) => ({
+          severity: monaco.MarkerSeverity.Error,
+          message: p.msg,
+          startLineNumber: p.line,
+          startColumn: p.col,
+          endLineNumber: p.line,
+          endColumn: model.getLineMaxColumn(Math.min(p.line, model.getLineCount())),
+        })),
+    )
+  }, [problems, filePath, modelPath])
+
+  return (
+    <MonacoEditor
+      path={modelPath}
+      defaultValue={initialValue}
+      defaultLanguage={language(filePath)}
+      theme={dark ? 'vs-dark' : 'vs'}
+      onMount={onMount}
+      onChange={(v) => onChange(v ?? '')}
+      options={{
+        fontSize: 13,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        automaticLayout: true,
+        tabSize: 4,
+        insertSpaces: false, // gofmt style
+      }}
+    />
+  )
+}

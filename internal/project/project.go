@@ -24,6 +24,38 @@ type Project struct {
 	trigger chan struct{}
 	cancel  context.CancelFunc
 	sig     uint64 // last poll signature, only used by Manager.poll
+
+	mu      sync.Mutex
+	status  Status
+	removed bool // set by the manager; no more status updates after that
+}
+
+// Status is the observable state of a project.
+type Status struct {
+	Name       string    `json:"name"`
+	Building   bool      `json:"building"`
+	Running    bool      `json:"running"`
+	PID        int       `json:"pid,omitempty"`
+	BuildError string    `json:"buildError,omitempty"` // of the last build, "" if it succeeded
+	BuiltAt    time.Time `json:"builtAt,omitzero"`     // last successful build
+	Restarts   int       `json:"restarts"`             // unexpected exits
+	Removed    bool      `json:"removed,omitempty"`
+}
+
+func (p *Project) Status() Status {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.status
+}
+
+func (p *Project) update(fn func(*Status)) {
+	p.mu.Lock()
+	fn(&p.status)
+	st, removed := p.status, p.removed
+	p.mu.Unlock()
+	if p.m.cfg.OnStatus != nil && !removed {
+		p.m.cfg.OnStatus(st)
+	}
 }
 
 func newProject(m *Manager, name string) *Project {
@@ -33,6 +65,7 @@ func newProject(m *Manager, name string) *Project {
 		dir:     filepath.Join(m.cfg.Root, name),
 		log:     m.cfg.Log.With("project", name),
 		trigger: make(chan struct{}, 1),
+		status:  Status{Name: name},
 	}
 }
 
@@ -53,7 +86,18 @@ func (p *Project) loop(ctx context.Context) {
 	}()
 	for {
 		start := time.Now()
-		if bin, err := p.build(ctx); err != nil {
+		p.update(func(s *Status) { s.Building = true })
+		bin, err := p.build(ctx)
+		p.update(func(s *Status) {
+			s.Building = false
+			if err != nil {
+				s.BuildError = strings.TrimPrefix(err.Error(), "exit status 1\n")
+			} else {
+				s.BuildError = ""
+				s.BuiltAt = time.Now()
+			}
+		})
+		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -158,12 +202,14 @@ func (p *Project) supervise(bin string) *process {
 				exited <- err
 			} else {
 				p.log.Info("started", "pid", cmd.Process.Pid)
+				p.update(func(s *Status) { s.Running, s.PID = true, cmd.Process.Pid })
 				go func() { exited <- cmd.Wait() }()
 			}
 
 			select {
 			case err := <-exited:
 				lw.Flush()
+				p.update(func(s *Status) { s.Running, s.PID = false, 0; s.Restarts++ })
 				p.log.Warn("exited", "err", err, "restart_in", backoff)
 				if time.Since(started) > 10*time.Second {
 					backoff = time.Second
@@ -178,6 +224,7 @@ func (p *Project) supervise(bin string) *process {
 					<-exited
 				}
 				lw.Flush()
+				p.update(func(s *Status) { s.Running, s.PID = false, 0 })
 				p.log.Info("stopped")
 				return
 			}

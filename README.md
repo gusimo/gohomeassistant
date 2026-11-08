@@ -57,6 +57,18 @@ ha.Default().Run()
   changed. If an entity a project uses disappears, the build fails and the
   previous version keeps running.
 
+## Web UI
+
+Open `http://<host>:8099` (`GHA_HTTP_ADDR`). You get projects with live
+status, files, a Monaco editor (⌘S / Ctrl+S saves and hot-reloads, build
+errors show up as markers) and a live log panel. **There is no authentication
+yet**, so only expose it on a trusted network.
+
+Frontend development: `cd web && npm install && npm run dev` starts Vite on
+:5173 and proxies `/api` to a running GoHomeAssistant on :8099.
+`npm run build` writes into `internal/server/dist/app`, which is embedded into
+the Go binary.
+
 ## Run locally
 
 ```sh
@@ -65,13 +77,16 @@ GHA_PROJECTS_DIR=./examples/projects GHA_DATA_DIR=./data GHA_SDK_DIR=./sdk \
 go run ./cmd/gohomeassistant
 ```
 
+Build the UI first (`cd web && npm install && npm run build`); otherwise
+`/` only shows a hint.
+
 Edit `examples/projects/hello/main.go` and save to see it reload.
 
 ## Docker (standalone)
 
 ```sh
 docker build -t gohomeassistant .
-docker run -v gha-data:/data -e HA_URL=... -e HA_TOKEN=... gohomeassistant
+docker run -p 8099:8099 -v gha-data:/data -e HA_URL=... -e HA_TOKEN=... gohomeassistant
 ```
 
 Inside the add-on, `SUPERVISOR_TOKEN` is picked up automatically.
@@ -97,7 +112,10 @@ project removal.
 
 1. ✅ Host, SDK, hot reload
 2. ✅ Typed entity and service code generation (`ent.Light.Kitchen.TurnOn()`)
-3. Web UI (React and Monaco, gopls over WebSocket, entity browser, logs), HA login (Ingress or OAuth)
+3. Web UI
+   - ✅ 3a: projects, files, editor, build markers, live logs
+   - 3b: gopls code completion
+   - 3c: HA login (Ingress or OAuth), entity browser
 4. In-UI debugging (Delve DAP)
 5. Git: local first, then remotes
 6. HA add-on packaging (config.yaml, Ingress)

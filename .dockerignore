@@ -1,2 +1,4 @@
 .git
 data
+web/node_modules
+internal/server/dist/app
