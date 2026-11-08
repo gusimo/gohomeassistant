@@ -111,11 +111,15 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.mgr.Statuses())
 }
 
-const mainTemplate = `package main
+// MainTemplate is the main.go of new projects. It must build against the
+// generated ent package and against the stub written before the first
+// generation (see TestTemplateBuilds).
+const MainTemplate = `package main
 
 import (
 	"log"
 
+	"gohomeassistant.local/ent"
 	ha "gohomeassistant.local/sdk"
 )
 
@@ -123,13 +127,17 @@ func main() {
 	ha.MustConnect()
 	log.Println("started")
 
-	// Typed entities: import "gohomeassistant.local/ent", then e.g.
+	// Typed entities and services of your Home Assistant, e.g.:
 	//
 	//	ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
 	//		if ent.BinarySensor.FrontDoor.IsOn() {
 	//			ent.Light.Hall.TurnOn(ent.LightTurnOn{BrightnessPct: 80})
 	//		}
 	//	})
+	//
+	// Type "ent." to browse them.
+
+	_ = ent.Svc // keeps the ent import while it is unused; remove once you use ent
 
 	ha.Default().Run()
 }
@@ -153,7 +161,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mod := fmt.Sprintf("module %s\n\ngo %s\n", req.Name, s.goVersion)
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainTemplate), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(MainTemplate), 0o644); err != nil {
 		httpError(w, err)
 		return
 	}
