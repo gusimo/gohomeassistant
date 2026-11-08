@@ -123,7 +123,7 @@ func main() {
 	ha.MustConnect()
 	log.Println("started")
 
-	// Typed entities: import "github.com/gusimo/gohomeassistant/ent", then e.g.
+	// Typed entities: import "gohomeassistant.local/ent", then e.g.
 	//
 	//	ent.BinarySensor.FrontDoor.OnChange(func(ch ha.StateChange) {
 	//		if ent.BinarySensor.FrontDoor.IsOn() {

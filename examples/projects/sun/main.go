@@ -4,8 +4,8 @@ package main
 import (
 	"log"
 
-	"github.com/gusimo/gohomeassistant/ent"
 	ha "github.com/gusimo/gohomeassistant/sdk"
+	"gohomeassistant.local/ent"
 )
 
 func main() {

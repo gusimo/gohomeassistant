@@ -5,3 +5,4 @@ data
 projects
 web/node_modules
 internal/server/dist/app
+dist

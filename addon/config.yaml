@@ -1,0 +1,40 @@
+# Home Assistant add-on definition. `./start.sh addon` assembles an
+# installable add-on folder from this and the sources.
+name: GoHomeAssistant
+version: "0.1.0"
+slug: gohomeassistant
+description: Write automations in Go, with a web IDE, hot reload, debugger and git
+url: https://github.com/gusimo/gohomeassistant
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+# The image brings its own init (tini).
+init: false
+# The UI is only reachable through HA (sidebar), for administrators.
+ingress: true
+ingress_port: 8099
+# Stream responses: the UI uses server-sent events for logs and status.
+ingress_stream: true
+panel_icon: mdi:language-go
+panel_title: GoHomeAssistant
+panel_admin: true
+# Access to the Home Assistant WebSocket API via the Supervisor.
+homeassistant_api: true
+# Delve (debugger) traces the project processes it starts.
+privileged:
+  - SYS_PTRACE
+# Projects live in the add-on config folder: included in backups and
+# reachable via the Samba / SSH / VS Code add-ons (addon_configs/).
+map:
+  - type: addon_config
+    read_only: false
+environment:
+  GHA_PROJECTS_DIR: /config/projects
+# Build output and caches can be recreated; keep them out of backups.
+backup_exclude:
+  - gohomeassistant/build
+  - gohomeassistant/cache
+  - gohomeassistant/mod
+timeout: 20

@@ -20,8 +20,10 @@ import (
 	"unicode"
 )
 
-// ModulePath is the import path of the generated module.
-const ModulePath = "github.com/gusimo/gohomeassistant/ent"
+// ModulePath is the import path of the generated module. It only exists
+// locally (resolved through the go.work GoHomeAssistant writes for each
+// project), hence the .local domain: it can't be fetched from anywhere.
+const ModulePath = "gohomeassistant.local/ent"
 
 // State is the part of an HA state the generator uses.
 type State struct {

@@ -20,7 +20,30 @@ changed.
 - **Live logs** of every project
 - **Login with your Home Assistant account** (administrators only)
 
-## Quick start
+## Install as a Home Assistant add-on
+
+For HA OS or HA Supervised. The UI then lives in the HA sidebar, behind HA's
+own login (administrators only).
+
+```sh
+./start.sh addon     # builds dist/addon/gohomeassistant (and a .tar.gz)
+```
+
+1. Copy the folder `dist/addon/gohomeassistant` into the `addons` folder of
+   your HA: via the Samba add-on (share `addons`), or with the SSH add-on:
+   `scp -r dist/addon/gohomeassistant root@<your-ha>:/addons/`
+2. HA → *Settings* → *Add-ons* → *Add-on Store* → menu (⋮) → *Check for
+   updates*.
+3. Under *Local add-ons*, open **GoHomeAssistant**, *Install* (it is built on
+   your HA, which takes a few minutes), *Start*.
+
+In the add-on, projects live in `addon_configs/<id>_gohomeassistant/projects`
+(reachable via Samba/SSH, included in backups). It talks to HA through the
+Supervisor and is only reachable through Ingress. To update, rebuild with
+`./start.sh addon`, bump `version` in `addon/config.yaml`, copy again and
+*Rebuild* in the add-on page.
+
+## Quick start (standalone Docker)
 
 You need Docker and a Home Assistant long-lived access token (HA → your
 profile → *Security* → *Long-lived access tokens*).
@@ -39,6 +62,7 @@ project with **+ new project**.
 | `./start.sh logs` | follow the logs |
 | `./start.sh stop` | stop the container (projects and data are kept in the `gha-data` volume) |
 | `./start.sh dev` | run without Docker (needs Go 1.24 and Node; no debugger on macOS) |
+| `./start.sh addon` | build the Home Assistant add-on folder (see above) |
 
 ## Writing automations
 
@@ -52,8 +76,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/gusimo/gohomeassistant/ent"
 	ha "github.com/gusimo/gohomeassistant/sdk"
+	"gohomeassistant.local/ent"
 )
 
 func main() {
@@ -80,7 +104,10 @@ func main() {
 }
 ```
 
-**Generated entities (`ent`).**
+**Generated entities (`gohomeassistant.local/ent`).**
+- The package is generated locally from your instance and only resolved
+  locally (through a `go.work` GoHomeAssistant writes for each project);
+  `.local` signals that it can't be downloaded from anywhere.
 - Every entity is a field of its domain: `ent.Light`, `ent.Sensor`,
   `ent.BinarySensor`, and so on.
 - Every service that targets a domain is a method on its entities.
@@ -90,9 +117,17 @@ func main() {
 - `ent.Svc.<Domain>.<Service>(...)` covers all services, including those
   without a target (scripts, notify) and calls by area or device
   (`ha.Target{AreaID: ...}`).
-- The package is regenerated when entities or services are added or removed.
-  If an entity a project uses disappears, the build fails and the previous
-  version keeps running.
+- It is regenerated on startup, whenever entities or services are added or
+  removed (entity registry, service registry, entities appearing or
+  disappearing; batched with a 3-second delay), and every 10 minutes. Then
+  all projects are rebuilt, but a project only restarts if its binary
+  changed.
+- If an entity a project uses is **removed or renamed**, that project's build
+  fails (shown in the UI) and the previous version keeps running. After a
+  restart of GoHomeAssistant there is no previous version, so the project
+  doesn't run until you fix it. An entity that is merely **unavailable** stays
+  in `ent`; its state is `"unavailable"`. There are no HA notifications for
+  either case yet.
 
 **SDK (`ha`).**
 - `ha.MustConnect()` / `ha.Connect()`
@@ -168,7 +203,8 @@ The UI can run arbitrary code with full access to Home Assistant. Therefore:
   OAuth login, checks `is_admin`, revokes the HA token it received and keeps
   its own session (an `HttpOnly`, `SameSite=Lax` cookie, in memory).
   Requests that change something must come from the UI's own origin.
-- As an add-on (planned), access will go through HA Ingress only.
+- As an add-on, only requests coming through HA Ingress (from the
+  Supervisor) are accepted; HA does the login.
 - `GHA_AUTH=none` disables all of this. Use it only on a machine nobody else
   can reach.
 - The file and git APIs reject paths outside a project and hidden files
@@ -198,6 +234,7 @@ The UI can run arbitrary code with full access to Home Assistant. Therefore:
 | `internal/logbus` | Log and status fan-out to the UI |
 | `sdk/` | The module projects import (no dependencies) |
 | `web/` | The UI (React, Vite, Monaco), embedded into the binary |
+| `addon/` | Home Assistant add-on definition (`config.yaml`, docs) |
 
 ## Development
 
@@ -232,4 +269,5 @@ embeds.
 3. ✅ Web UI: editor, completion, logs, entity browser, HA login
 4. ✅ Debugging in the UI
 5. Git: ✅ local; next: remotes (push/pull with an SSH key or token)
-6. Home Assistant add-on (`config.yaml`, Ingress)
+6. ✅ Home Assistant add-on (local install); next: an add-on repository with
+   prebuilt images, installable by URL

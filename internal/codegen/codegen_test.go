@@ -131,7 +131,7 @@ func TestGeneratedCodeCompiles(t *testing.T) {
 
 import (
 	ha "github.com/gusimo/gohomeassistant/sdk"
-	"github.com/gusimo/gohomeassistant/ent"
+	"gohomeassistant.local/ent"
 )
 
 func main() {
