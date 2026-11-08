@@ -22,8 +22,7 @@ export function Logs({ logs, project, onlyProject, setOnlyProject, onClear }: Pr
 
   return (
     <section className="gha-logs">
-      <header className="gha-panel-header">
-        <span>Logs</span>
+      <header className="gha-panel-header gha-sub-header">
         <label className="gha-check">
           <input type="checkbox" checked={onlyProject} disabled={!project} onChange={(e) => setOnlyProject(e.target.checked)} />
           only {project ?? 'selected project'}

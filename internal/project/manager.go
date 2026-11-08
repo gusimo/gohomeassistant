@@ -9,15 +9,19 @@ package project
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io/fs"
 	"log/slog"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -45,6 +49,7 @@ type Manager struct {
 	watcher  *fsnotify.Watcher
 	wg       sync.WaitGroup
 	ctx      context.Context // of Run, for projects started by Rescan
+	dlv      string          // path of Delve, "" if not installed
 }
 
 func NewManager(cfg Config) (*Manager, error) {
@@ -68,7 +73,8 @@ func NewManager(cfg Config) (*Manager, error) {
 		}
 	}
 	cfg.Modules = mods
-	return &Manager{cfg: cfg, goVersion: gv, projects: map[string]*Project{}}, nil
+	dlv, _ := exec.LookPath("dlv")
+	return &Manager{cfg: cfg, goVersion: gv, projects: map[string]*Project{}, dlv: dlv}, nil
 }
 
 // Run watches the projects root until ctx is cancelled, then stops all
@@ -249,6 +255,44 @@ func (m *Manager) Trigger(name string) bool {
 		p.Trigger()
 	}
 	return p != nil
+}
+
+// SetDebug switches debug mode of a project.
+func (m *Manager) SetDebug(name string, on bool) error {
+	if on && m.dlv == "" {
+		return errors.New("Delve (dlv) is not installed")
+	}
+	m.mu.Lock()
+	p := m.projects[name]
+	m.mu.Unlock()
+	if p == nil {
+		return fs.ErrNotExist
+	}
+	p.SetDebug(on)
+	return nil
+}
+
+// debugCommand runs bin under a headless Delve that keeps the program
+// running (--continue) and accepts debugger clients (DAP) at any time.
+func (m *Manager) debugCommand(bin string) (*exec.Cmd, int, error) {
+	port, err := freePort()
+	if err != nil {
+		return nil, 0, err
+	}
+	cmd := exec.Command(m.dlv, "exec", bin, "--headless", "--accept-multiclient", "--continue",
+		"--api-version=2", fmt.Sprintf("--listen=127.0.0.1:%d", port))
+	// Own process group, so stopping also reaches the debugged program.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd, port, nil
+}
+
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // TriggerAll rebuilds all projects, e.g. after the entities were regenerated.

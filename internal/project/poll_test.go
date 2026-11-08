@@ -66,7 +66,7 @@ func TestBuildIsReproducible(t *testing.T) {
 	p := newProject(m, "demo")
 	var sums [2][32]byte
 	for i := range sums {
-		bin, err := p.build(t.Context())
+		bin, err := p.build(t.Context(), false)
 		if err != nil {
 			t.Fatal(err)
 		}

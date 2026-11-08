@@ -68,6 +68,21 @@ must be in `PATH`; the Docker image includes it. An entity browser
 (search, live state, attributes) inserts or copies the matching Go
 expression, e.g. `ent.Sensor.Power`.
 
+### Debugging
+
+In the **Debug** tab, turn on *Debug mode* for a project. It is rebuilt
+without optimizations and runs under a headless Delve (`dlv`, included in the
+Docker image), and it keeps running normally until a breakpoint is hit.
+Click left of a line number to set a breakpoint. You get the call stack,
+variables (expandable), Continue (F5), Pause, Step over (F10), Step into
+(F11) and Step out (Shift+F11). Saving still hot-reloads, and the debugger
+re-attaches with your breakpoints.
+
+While the program is paused, HA events queue up (about 30,000 messages,
+roughly 25 minutes on a busy instance). Beyond that the project is
+disconnected and restarts. Debug mode needs Linux (Docker or add-on) and
+isn't kept across restarts of GoHomeAssistant.
+
 ### Login
 
 The UI can run code with full access to HA, so only **HA administrators** get
@@ -137,6 +152,6 @@ project removal.
    - ✅ 3a: projects, files, editor, build markers, live logs
    - ✅ 3b: gopls code completion
    - 3c: HA login (Ingress or OAuth), entity browser
-4. In-UI debugging (Delve DAP)
+4. ✅ In-UI debugging (Delve DAP)
 5. Git: local first, then remotes
 6. HA add-on packaging (config.yaml, Ingress)

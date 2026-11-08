@@ -64,7 +64,7 @@ func (s *Server) lsp(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		rd := bufio.NewReader(stdout)
 		for {
-			msg, err := readLSP(rd)
+			msg, err := readFramed(rd)
 			if err != nil {
 				return
 			}
@@ -85,7 +85,9 @@ func (s *Server) lsp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func readLSP(rd *bufio.Reader) ([]byte, error) {
+// readFramed reads one Content-Length framed message (LSP and DAP use the
+// same base protocol).
+func readFramed(rd *bufio.Reader) ([]byte, error) {
 	hdr, err := textproto.NewReader(rd).ReadMIMEHeader()
 	if err != nil {
 		return nil, err

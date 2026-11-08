@@ -127,7 +127,16 @@ button.gha-danger.gha-armed { color: var(--err); border-color: var(--err); }
 .gha-empty { padding: 24px; color: var(--muted); }
 
 /* Logs */
-.gha-logs { display: flex; flex-direction: column; flex: none; height: 35%; min-height: 0; border-top: 1px solid var(--border); }
+.gha-bottom { display: flex; flex-direction: column; flex: none; height: 38%; min-height: 0; border-top: 1px solid var(--border); }
+.gha-logs { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.gha-tabs { display: flex; gap: 2px; padding: 0 8px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+button.gha-tab {
+  background: transparent; color: var(--muted); border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 6px 12px; display: flex; align-items: center; gap: 6px;
+}
+button.gha-tab:hover { color: var(--text); }
+button.gha-tab.gha-active { color: var(--text); border-bottom-color: var(--accent); }
+.gha-sub-header { min-height: 32px; padding: 4px 12px; }
 .gha-check { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
 .gha-log-lines { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 12px; padding: 4px 0; }
 .gha-log-line { display: flex; gap: 10px; padding: 1px 12px; }
@@ -177,3 +186,37 @@ button.gha-toggled { color: var(--text); background: var(--active); }
 .gha-attrs th { text-align: left; font-weight: normal; color: var(--muted); width: 40%; padding: 2px 6px 2px 0; vertical-align: top; overflow: hidden; text-overflow: ellipsis; }
 .gha-attrs td { font-family: var(--mono); padding: 2px 0; word-break: break-word; }
 .gha-more { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+
+/* Debugger */
+.gha-bp { background: var(--err); border-radius: 50%; width: 10px !important; height: 10px !important; margin: 4px 0 0 4px; }
+.monaco-editor .margin-view-overlays .cgmr:hover { cursor: pointer; }
+.gha-current-line { background: rgba(255, 200, 0, 0.22); }
+.gha-current-arrow { border-left: 3px solid var(--warn); }
+.gha-dbg-dot { width: 7px; height: 7px; }
+.gha-dbg-dot.gha-dbg-running, .gha-dbg-dot.gha-dbg-attaching { background: var(--ok); }
+.gha-dbg-dot.gha-dbg-stopped { background: var(--warn); }
+.gha-dbg-dot.gha-dbg-off, .gha-dbg-dot.gha-dbg-error { background: var(--err); }
+.gha-debug { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.gha-debug-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 12px; min-height: 32px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.gha-debug-state { font-size: 12px; color: var(--muted); }
+.gha-debug-state.gha-dbg-stopped { color: var(--warn); font-weight: 600; }
+.gha-debug-state.gha-dbg-running { color: var(--ok); }
+.gha-debug-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.gha-debug-col { min-height: 0; overflow-y: auto; border-right: 1px solid var(--border); }
+.gha-frames, .gha-vars { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 12px; }
+.gha-frames li { display: flex; gap: 8px; padding: 2px 12px; cursor: pointer; }
+.gha-frames li:hover { background: var(--hover); }
+.gha-frames li.gha-active { background: var(--active); }
+.gha-frame-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-frame-loc { color: var(--muted); white-space: nowrap; }
+.gha-frames .gha-muted, .gha-vars .gha-muted { padding: 2px 12px; cursor: default; }
+.gha-var { display: flex; gap: 6px; padding: 1px 12px; white-space: nowrap; }
+.gha-var.gha-expandable { cursor: pointer; }
+.gha-var:hover { background: var(--hover); }
+.gha-var-arrow { width: 10px; color: var(--muted); flex: none; }
+.gha-var-name { color: var(--accent); flex: none; }
+.gha-var-value { overflow: hidden; text-overflow: ellipsis; }
+.gha-nested { padding-left: 14px; }

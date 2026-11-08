@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import MonacoEditor, { loader, type OnMount } from '@monaco-editor/react'
 // Bundle Monaco locally (no CDN): the UI must work offline and behind Ingress.
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
@@ -26,18 +26,51 @@ type Props = {
   onChange: (value: string) => void
   onSave: () => void
   onEditor: (editor: monaco.editor.IStandaloneCodeEditor) => void
+  breakpoints: number[] // lines of this file
+  onToggleBreakpoint: (line: number) => void
+  currentLine?: number // where the debugger is paused, in this file
 }
 
-export function Editor({ modelPath, filePath, initialValue, problems, dark, onChange, onSave, onEditor }: Props) {
+export function Editor(props: Props) {
+  const { modelPath, filePath, initialValue, problems, dark, onChange, onSave, onEditor, breakpoints, currentLine } = props
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const onSaveRef = useRef(onSave)
   onSaveRef.current = onSave
+  const onToggleRef = useRef(props.onToggleBreakpoint)
+  onToggleRef.current = props.onToggleBreakpoint
 
   const onMount: OnMount = (editor, m) => {
     editorRef.current = editor
     onEditor(editor)
+    setEditor(editor)
+    decorations.current = editor.createDecorationsCollection()
     editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => onSaveRef.current())
+    // Click in the glyph margin (left of the line numbers) toggles a breakpoint.
+    editor.onMouseDown((e) => {
+      if (e.target.type === m.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && e.target.position) {
+        onToggleRef.current(e.target.position.lineNumber)
+      }
+    })
   }
+
+  // Breakpoints and the paused line.
+  useEffect(() => {
+    if (!editor || !decorations.current) return
+    const d: monaco.editor.IModelDeltaDecoration[] = breakpoints.map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: { glyphMarginClassName: 'gha-bp', glyphMarginHoverMessage: { value: 'Breakpoint (click to remove)' } },
+    }))
+    if (currentLine) {
+      d.push({
+        range: new monaco.Range(currentLine, 1, currentLine, 1),
+        options: { isWholeLine: true, className: 'gha-current-line', linesDecorationsClassName: 'gha-current-arrow' },
+      })
+      editor.revealLineInCenterIfOutsideViewport(currentLine)
+    }
+    decorations.current.set(d)
+  }, [editor, breakpoints, currentLine, modelPath])
 
   // Show build errors of this file as markers.
   useEffect(() => {
@@ -74,6 +107,7 @@ export function Editor({ modelPath, filePath, initialValue, problems, dark, onCh
         automaticLayout: true,
         tabSize: 4,
         insertSpaces: false, // gofmt style
+        glyphMargin: true, // breakpoints
       }}
     />
   )

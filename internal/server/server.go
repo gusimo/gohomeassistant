@@ -85,6 +85,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("GET /api/projects/{name}/lsp", s.lsp)
 	mux.HandleFunc("GET /api/entities", s.entities)
+	mux.HandleFunc("POST /api/projects/{name}/debug", s.setDebug)
+	mux.HandleFunc("GET /api/projects/{name}/dap", s.dap)
 
 	if app, err := fs.Sub(dist, "dist/app"); err == nil {
 		if _, err := fs.Stat(app, "index.html"); err == nil {

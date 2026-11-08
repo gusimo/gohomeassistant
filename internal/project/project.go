@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,6 +31,13 @@ type Project struct {
 	removed bool // set by the manager; no more status updates after that
 }
 
+// SetDebug switches debug mode and rebuilds: with debug on, the project is
+// compiled without optimizations and runs under a headless Delve.
+func (p *Project) SetDebug(on bool) {
+	p.update(func(s *Status) { s.Debug = on })
+	p.Trigger()
+}
+
 // Status is the observable state of a project.
 type Status struct {
 	Name       string    `json:"name"`
@@ -40,6 +48,8 @@ type Status struct {
 	BuildError string    `json:"buildError,omitempty"` // of the last build, "" if it succeeded
 	BuiltAt    time.Time `json:"builtAt,omitzero"`     // last successful build
 	Restarts   int       `json:"restarts"`             // unexpected exits
+	Debug      bool      `json:"debug"`                // debug mode requested
+	DebugPort  int       `json:"debugPort,omitempty"`  // Delve's port while running under the debugger
 	Removed    bool      `json:"removed,omitempty"`
 }
 
@@ -87,8 +97,9 @@ func (p *Project) loop(ctx context.Context) {
 	}()
 	for {
 		start := time.Now()
+		debug := p.Status().Debug
 		p.update(func(s *Status) { s.Building = true })
-		bin, err := p.build(ctx)
+		bin, err := p.build(ctx, debug)
 		p.update(func(s *Status) {
 			s.Building = false
 			if err != nil {
@@ -117,7 +128,7 @@ func (p *Project) loop(ctx context.Context) {
 			if proc != nil {
 				proc.stop()
 			}
-			proc = p.supervise(bin)
+			proc = p.supervise(bin, debug)
 			proc.hash = sum
 		}
 
@@ -141,7 +152,7 @@ func (p *Project) loop(ctx context.Context) {
 
 // build compiles the project to a fresh binary. A go.work file makes the
 // local SDK module available without the project needing replace directives.
-func (p *Project) build(ctx context.Context) (string, error) {
+func (p *Project) build(ctx context.Context, debug bool) (string, error) {
 	work, err := p.m.writeWork(p.name)
 	if err != nil {
 		return "", err
@@ -151,7 +162,11 @@ func (p *Project) build(ctx context.Context) (string, error) {
 	bin := filepath.Join(out, fmt.Sprintf("app-%d", time.Now().UnixNano()))
 	// An empty build ID makes the binary depend only on the compiled code,
 	// so e.g. regenerated entities the project doesn't use don't restart it.
-	cmd := exec.CommandContext(ctx, "go", "build", "-ldflags=-buildid=", "-o", bin, ".")
+	args := []string{"build", "-ldflags=-buildid=", "-o", bin}
+	if debug {
+		args = append(args, "-gcflags=all=-N -l") // no optimizations: accurate stepping and variables
+	}
+	cmd := exec.CommandContext(ctx, "go", append(args, ".")...)
 	cmd.Dir = p.dir
 	cmd.Env = append(os.Environ(), "GOWORK="+work)
 	var stderr bytes.Buffer
@@ -176,7 +191,7 @@ func (pr *process) stop() {
 }
 
 // supervise runs bin and restarts it with backoff when it exits on its own.
-func (p *Project) supervise(bin string) *process {
+func (p *Project) supervise(bin string, debug bool) *process {
 	pr := &process{stopCh: make(chan struct{}), done: make(chan struct{})}
 	go func() {
 		defer close(pr.done)
@@ -185,8 +200,18 @@ func (p *Project) supervise(bin string) *process {
 		for {
 			started := time.Now()
 			cmd := exec.Command(bin)
+			debugPort := 0
+			if debug {
+				var err error
+				if cmd, debugPort, err = p.m.debugCommand(bin); err != nil {
+					p.log.Error("cannot start debugger, running without", "err", err)
+					cmd, debugPort = exec.Command(bin), 0
+				}
+			}
 			cmd.Dir = p.dir
 			cmd.Env = append(os.Environ(), "GHA_SOCKET="+p.m.cfg.Socket, "GHA_PROJECT="+p.name)
+			// A leftover child holding stdout open must not block Wait.
+			cmd.WaitDelay = 2 * time.Second
 			lw := &lineWriter{log: p.log}
 			cmd.Stdout, cmd.Stderr = lw, lw
 
@@ -194,30 +219,39 @@ func (p *Project) supervise(bin string) *process {
 			if err := cmd.Start(); err != nil {
 				exited <- err
 			} else {
-				p.log.Info("started", "pid", cmd.Process.Pid)
-				p.update(func(s *Status) { s.Running, s.PID = true, cmd.Process.Pid })
+				if debugPort != 0 {
+					p.log.Info("started under debugger", "pid", cmd.Process.Pid, "port", debugPort)
+				} else {
+					p.log.Info("started", "pid", cmd.Process.Pid)
+				}
+				p.update(func(s *Status) { s.Running, s.PID, s.DebugPort = true, cmd.Process.Pid, debugPort })
 				go func() { exited <- cmd.Wait() }()
 			}
 
 			select {
 			case err := <-exited:
 				lw.Flush()
-				p.update(func(s *Status) { s.Running, s.PID = false, 0; s.Restarts++ })
+				p.update(func(s *Status) { s.Running, s.PID, s.DebugPort = false, 0, 0; s.Restarts++ })
 				p.log.Warn("exited", "err", err, "restart_in", backoff)
 				if time.Since(started) > 10*time.Second {
 					backoff = time.Second
 				}
 			case <-pr.stopCh:
-				_ = cmd.Process.Signal(syscall.SIGTERM)
+				if debugPort != 0 && cmd.Process != nil {
+					// Delve runs the program in its own process group; kill it
+					// directly (it may be paused at a breakpoint anyway).
+					killDescendants(cmd.Process.Pid)
+				}
+				signal(cmd, syscall.SIGTERM, debugPort != 0)
 				select {
 				case <-exited:
 				case <-time.After(5 * time.Second):
 					p.log.Warn("did not stop in time, killing")
-					_ = cmd.Process.Kill()
+					signal(cmd, syscall.SIGKILL, debugPort != 0)
 					<-exited
 				}
 				lw.Flush()
-				p.update(func(s *Status) { s.Running, s.PID = false, 0 })
+				p.update(func(s *Status) { s.Running, s.PID, s.DebugPort = false, 0, 0 })
 				p.log.Info("stopped")
 				return
 			}
@@ -231,6 +265,55 @@ func (p *Project) supervise(bin string) *process {
 		}
 	}()
 	return pr
+}
+
+// signal sends sig to the process, or to its whole process group (Delve and
+// the program it runs).
+func signal(cmd *exec.Cmd, sig syscall.Signal, group bool) {
+	if cmd.Process == nil {
+		return
+	}
+	if group {
+		_ = syscall.Kill(-cmd.Process.Pid, sig)
+		return
+	}
+	_ = cmd.Process.Signal(sig)
+}
+
+// killDescendants SIGKILLs all descendants of pid (Linux /proc; a no-op
+// elsewhere, where debug mode isn't supported anyway).
+func killDescendants(pid int) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	children := map[int][]int{}
+	for _, e := range entries {
+		child, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		// "pid (comm) state ppid ...": comm may contain spaces and parens.
+		fields := strings.Fields(string(b[bytes.LastIndexByte(b, ')')+1:]))
+		if len(fields) < 2 {
+			continue
+		}
+		if ppid, err := strconv.Atoi(fields[1]); err == nil {
+			children[ppid] = append(children[ppid], child)
+		}
+	}
+	var kill func(int)
+	kill = func(p int) {
+		for _, c := range children[p] {
+			kill(c)
+			_ = syscall.Kill(c, syscall.SIGKILL)
+		}
+	}
+	kill(pid)
 }
 
 // lineWriter logs process output line by line.

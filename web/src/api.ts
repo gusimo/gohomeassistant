@@ -9,6 +9,8 @@ export type Status = {
   buildError?: string
   builtAt?: string
   restarts: number
+  debug: boolean
+  debugPort?: number
   removed?: boolean
 }
 
@@ -56,6 +58,8 @@ export const api = {
   createProject: (name: string) => req('POST', './api/projects', JSON.stringify({ name })),
   deleteProject: (name: string) => req('DELETE', `./api/projects/${encodeURIComponent(name)}`),
   rebuild: (name: string) => req('POST', `./api/projects/${encodeURIComponent(name)}/build`),
+  setDebug: (name: string, enabled: boolean) =>
+    req('POST', `./api/projects/${encodeURIComponent(name)}/debug`, JSON.stringify({ enabled })),
   entities: async (): Promise<EntityState[]> => (await req('GET', './api/entities')).json(),
   me: async (): Promise<Me> => (await req('GET', './api/me')).json(),
   logout: () => req('POST', './auth/logout'),

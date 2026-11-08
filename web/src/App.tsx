@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, parseBuildError, subscribe, type FileInfo, type LogEntry, type Me, type Status } from './api'
 import { Editor } from './Editor'
 import { Entities } from './Entities'
+import { DebugPanel, useDebugger, type Breakpoints } from './Debug'
 import { Logs } from './Logs'
 import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
 import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
@@ -50,6 +51,8 @@ export function App() {
   const [onlyProject, setOnlyProject] = useState(stored('gha.onlyProject') === '1')
   const [showEntities, setShowEntities] = useState(stored('gha.entities') === '1')
   const [me, setMe] = useState<Me | null>(null)
+  const [bottomTab, setBottomTab] = useState<'logs' | 'debug'>('logs')
+  const [bpVersion, setBpVersion] = useState(0)
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
   const current = useRef<Record<string, string>>({}) // current editor content per file
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -134,6 +137,37 @@ export function App() {
   const projectExists = !!project && !!statuses[project]
   const projectDir = project ? statuses[project]?.dir : undefined
 
+  // Breakpoints per project, kept in the browser.
+  const breakpoints = useMemo<Breakpoints>(() => {
+    void bpVersion
+    try {
+      return project ? JSON.parse(stored(`gha.bp.${project}`) ?? '{}') : {}
+    } catch {
+      return {}
+    }
+  }, [project, bpVersion])
+  const saveBreakpoints = (b: Breakpoints) => {
+    if (!project) return
+    store(`gha.bp.${project}`, JSON.stringify(b))
+    setBpVersion((v) => v + 1)
+  }
+  const toggleBreakpoint = (line: number) => {
+    if (!open) return
+    const lines = breakpoints[open.path] ?? []
+    const next = lines.includes(line) ? lines.filter((l) => l !== line) : [...lines, line].sort((a, b) => a - b)
+    const b = { ...breakpoints, [open.path]: next }
+    if (next.length === 0) delete b[open.path]
+    saveBreakpoints(b)
+  }
+  const breakpointCount = Object.values(breakpoints).reduce((n, l) => n + l.length, 0)
+
+  const dbg = useDebugger(projectExists ? project : null, projectExists ? status : undefined, breakpoints)
+  // File of the selected stack frame, relative to the project.
+  const frameFile =
+    dbg.frame?.source?.path && projectDir && dbg.frame.source.path.startsWith(projectDir + '/')
+      ? dbg.frame.source.path.slice(projectDir.length + 1)
+      : null
+
   // One gopls session per selected project.
   useEffect(() => {
     if (!project || !projectDir) return
@@ -147,6 +181,14 @@ export function App() {
     refreshFiles(project)
     openFile(project, stored(`gha.file.${project}`) ?? 'main.go')
   }, [project, projectExists, refreshFiles, openFile])
+
+  // When the debugger stops, show the Debug tab and the paused line.
+  useEffect(() => {
+    if (dbg.state === 'stopped') setBottomTab('debug')
+  }, [dbg.state])
+  useEffect(() => {
+    if (project && frameFile) openFile(project, frameFile)
+  }, [project, frameFile, openFile])
 
   const save = useCallback(async () => {
     if (!open) return
@@ -331,6 +373,9 @@ export function App() {
               onChange={onChange}
               onSave={save}
               onEditor={(e) => (editorRef.current = e)}
+              breakpoints={breakpoints[open.path] ?? []}
+              onToggleBreakpoint={toggleBreakpoint}
+              currentLine={frameFile === open.path ? dbg.frame?.line : undefined}
             />
           ) : (
             <div className="gha-empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
@@ -339,16 +384,38 @@ export function App() {
         {showEntities && <Entities onInsert={insert} onClose={() => toggleEntities(false)} />}
         </div>
 
-        <Logs
-          logs={logs}
-          project={projectExists ? project : null}
-          onlyProject={onlyProject}
-          setOnlyProject={(v) => {
-            setOnlyProject(v)
-            store('gha.onlyProject', v ? '1' : '0')
-          }}
-          onClear={() => setLogs([])}
-        />
+        <section className="gha-bottom">
+          <nav className="gha-tabs">
+            <button className={bottomTab === 'logs' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('logs')}>
+              Logs
+            </button>
+            <button className={bottomTab === 'debug' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('debug')}>
+              Debug
+              {status?.debug && <span className={`gha-dot gha-dbg-dot gha-dbg-${dbg.state}`} />}
+            </button>
+          </nav>
+          {bottomTab === 'logs' || !projectExists || !project ? (
+            <Logs
+              logs={logs}
+              project={projectExists ? project : null}
+              onlyProject={onlyProject}
+              setOnlyProject={(v) => {
+                setOnlyProject(v)
+                store('gha.onlyProject', v ? '1' : '0')
+              }}
+              onClear={() => setLogs([])}
+            />
+          ) : (
+            <DebugPanel
+              project={project}
+              status={status}
+              dbg={dbg}
+              breakpointCount={breakpointCount}
+              onClearBreakpoints={() => saveBreakpoints({})}
+              onError={setError}
+            />
+          )}
+        </section>
       </main>
     </div>
   )

@@ -14,12 +14,15 @@ COPY --from=web /src/internal/server/dist/app ./internal/server/dist/app
 RUN CGO_ENABLED=0 go build -o /gohomeassistant ./cmd/gohomeassistant
 # gopls powers code completion in the editor.
 RUN CGO_ENABLED=0 GOBIN=/out go install golang.org/x/tools/gopls@v0.20.0
+# Delve powers the debugger in the UI.
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/go-delve/delve/cmd/dlv@v1.25.2
 
 # The runtime image keeps the Go toolchain: projects are compiled in place.
 FROM golang:1.24-alpine
-RUN apk add --no-cache git
+# tini reaps orphaned processes (we run as PID 1 and start many children).
+RUN apk add --no-cache git tini
 COPY --from=build /gohomeassistant /usr/local/bin/gohomeassistant
-COPY --from=build /out/gopls /usr/local/bin/gopls
+COPY --from=build /out/gopls /out/dlv /usr/local/bin/
 COPY sdk /opt/gohomeassistant/sdk
 # Persist build and module caches across container restarts.
 ENV GOCACHE=/data/gohomeassistant/cache \
@@ -27,4 +30,4 @@ ENV GOCACHE=/data/gohomeassistant/cache \
     CGO_ENABLED=0
 VOLUME /data
 EXPOSE 8099
-ENTRYPOINT ["gohomeassistant"]
+ENTRYPOINT ["/sbin/tini", "--", "gohomeassistant"]

@@ -46,6 +46,10 @@ func (b *Bridge) Serve(ctx context.Context, path string) error {
 	}
 }
 
+// outBuffer is how many messages a project may fall behind, e.g. while it
+// is paused in the debugger (~25 min at 20 state changes/s).
+const outBuffer = 32768
+
 type session struct {
 	b    *Bridge
 	out  chan []byte
@@ -56,7 +60,7 @@ type session struct {
 
 func (b *Bridge) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
-	s := &session{b: b, out: make(chan []byte, 4096), subs: map[int64]*ha.Subscription{}, done: make(chan struct{})}
+	s := &session{b: b, out: make(chan []byte, outBuffer), subs: map[int64]*ha.Subscription{}, done: make(chan struct{})}
 	defer s.cleanup()
 
 	go func() { // single writer
