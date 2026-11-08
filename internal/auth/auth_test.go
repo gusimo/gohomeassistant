@@ -3,10 +3,13 @@ package auth
 import (
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -163,4 +166,77 @@ func TestIngressOnlyFromSupervisor(t *testing.T) {
 			t.Errorf("user from ingress headers: %q", rec.Body.String())
 		}
 	}
+}
+
+// Sessions survive a restart; the file never contains the session token.
+func TestSessionsSurviveRestart(t *testing.T) {
+	fake := hatest.New()
+	defer fake.Close()
+	file := filepath.Join(t.TempDir(), "sessions.json")
+	newServer := func() *httptest.Server {
+		a := &Auth{Mode: HA, HAURL: fake.HTTPURL(), Log: slog.New(slog.DiscardHandler), SessionFile: file}
+		if err := a.LoadSessions(); err != nil {
+			t.Fatal(err)
+		}
+		mux := http.NewServeMux()
+		a.Register(mux)
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
+		return httptest.NewServer(a.Wrap(mux))
+	}
+
+	srv := newServer()
+	c := noRedirect()
+	login(t, c, srv, hatest.AdminCode)
+	u, _ := url.Parse(srv.URL)
+	var token string
+	for _, ck := range c.Jar.Cookies(u) {
+		if ck.Name == sessionCookie {
+			token = ck.Value
+		}
+	}
+	srv.Close()
+
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token == "" || strings.Contains(string(b), token) {
+		t.Fatalf("session file must store a hash, not the token: %s", b)
+	}
+	if fi, _ := os.Stat(file); fi.Mode().Perm() != 0o600 {
+		t.Errorf("session file mode %v, want 0600", fi.Mode().Perm())
+	}
+
+	// "Restart": a new instance on the same address, same cookie.
+	srv2 := newServerAt(t, newServer, u.Host)
+	if code, body := get(t, c, srv2.URL+"/api/me"); code != 200 || !strings.Contains(body, "Admin") {
+		t.Fatalf("session lost after restart: %d %s", code, body)
+	}
+	req, _ := http.NewRequest("POST", srv2.URL+"/auth/logout", nil)
+	c.Do(req)
+	srv2.Close()
+
+	srv3 := newServerAt(t, newServer, u.Host)
+	defer srv3.Close()
+	c2 := noRedirect()
+	c2.Jar.SetCookies(u, []*http.Cookie{{Name: sessionCookie, Value: token}})
+	if code, _ := get(t, c2, srv3.URL+"/api/me"); code != http.StatusUnauthorized {
+		t.Errorf("logged-out session still valid after restart: %d", code)
+	}
+}
+
+// newServerAt starts the handler of newServer() on a fixed address, so
+// cookies of an earlier instance apply.
+func newServerAt(t *testing.T, newServer func() *httptest.Server, addr string) *httptest.Server {
+	t.Helper()
+	tmp := newServer()
+	h := tmp.Config.Handler
+	tmp.Close()
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &httptest.Server{Listener: l, Config: &http.Server{Handler: h}}
+	srv.Start()
+	return srv
 }

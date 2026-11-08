@@ -4,7 +4,8 @@
 //   - ingress: running as an add-on; only requests proxied by the Supervisor
 //     (HA Ingress, which already authenticated the user) are accepted.
 //   - ha: standalone; users log in with Home Assistant's OAuth flow and must
-//     be HA administrators. A server-side session is kept in memory.
+//     be HA administrators. Server-side sessions survive restarts if
+//     SessionFile is set.
 //   - none: no authentication (development only).
 //
 // The UI can run code with full access to Home Assistant, so non-admins are
@@ -14,8 +15,10 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +26,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,14 +65,76 @@ type Auth struct {
 	PublicURL   string // optional: fixed base URL of GoHomeAssistant (otherwise derived from the request)
 	Log         *slog.Logger
 	Client      *http.Client
+	// SessionFile, if set, keeps sessions across restarts. Only SHA-256
+	// hashes of the session tokens are stored, never the tokens.
+	SessionFile string
 
 	mu       sync.Mutex
-	sessions map[string]session
+	sessions map[string]session // by hashToken(cookie value)
 }
 
 type session struct {
-	user    User
-	expires time.Time
+	User    User      `json:"user"`
+	Expires time.Time `json:"expires"`
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// LoadSessions reads the sessions saved by a previous run. A missing file
+// is not an error.
+func (a *Auth) LoadSessions() error {
+	if a.SessionFile == "" {
+		return nil
+	}
+	b, err := os.ReadFile(a.SessionFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var stored map[string]session
+	if err := json.Unmarshal(b, &stored); err != nil {
+		return fmt.Errorf("%s: %w", a.SessionFile, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessions = map[string]session{}
+	for h, s := range stored {
+		if time.Now().Before(s.Expires) {
+			a.sessions[h] = s
+		}
+	}
+	return nil
+}
+
+// saveSessionsLocked writes all sessions (a.mu held). Errors are logged:
+// the session still works until the next restart.
+func (a *Auth) saveSessionsLocked() {
+	if a.SessionFile == "" {
+		return
+	}
+	now := time.Now()
+	for h, s := range a.sessions {
+		if now.After(s.Expires) {
+			delete(a.sessions, h)
+		}
+	}
+	b, _ := json.Marshal(a.sessions)
+	tmp := a.SessionFile + ".tmp"
+	err := os.MkdirAll(filepath.Dir(a.SessionFile), 0o700)
+	if err == nil {
+		err = os.WriteFile(tmp, b, 0o600)
+	}
+	if err == nil {
+		err = os.Rename(tmp, a.SessionFile)
+	}
+	if err != nil {
+		a.Log.Warn("cannot save login sessions", "err", err)
+	}
 }
 
 type ctxKey struct{}
@@ -208,7 +275,8 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 	if a.sessions == nil {
 		a.sessions = map[string]session{}
 	}
-	a.sessions[id] = session{user: user, expires: time.Now().Add(sessionTTL)}
+	a.sessions[hashToken(id)] = session{User: user, Expires: time.Now().Add(sessionTTL)}
+	a.saveSessionsLocked()
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: id, Path: "/", MaxAge: int(sessionTTL.Seconds()),
@@ -221,7 +289,8 @@ func (a *Auth) callback(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		a.mu.Lock()
-		delete(a.sessions, c.Value)
+		delete(a.sessions, hashToken(c.Value))
+		a.saveSessionsLocked()
 		a.mu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1})
@@ -231,15 +300,17 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) session(id string) (User, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s, ok := a.sessions[id]
+	h := hashToken(id)
+	s, ok := a.sessions[h]
 	if !ok {
 		return User{}, false
 	}
-	if time.Now().After(s.expires) {
-		delete(a.sessions, id)
+	if time.Now().After(s.Expires) {
+		delete(a.sessions, h)
+		a.saveSessionsLocked()
 		return User{}, false
 	}
-	return s.user, true
+	return s.User, true
 }
 
 type tokens struct {

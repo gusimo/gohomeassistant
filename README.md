@@ -154,8 +154,11 @@ project, downloaded on build (this needs internet access).
 
 ## The web UI
 
-- **Editor**: ⌘S / Ctrl+S formats, saves and hot-reloads. Build errors
-  appear as red markers. Files changed on disk (git, other editors) reload
+- **Editor**: ⌘S / Ctrl+S formats (gofmt), saves and hot-reloads.
+  **Auto save** (switch in the header, on by default) saves 1.5 s after you
+  stop typing, without formatting. Every save hot-reloads the project, so
+  turn it off for delicate edits or while debugging. *Rebuild* saves
+  unsaved changes first. Build errors appear as red markers. Files changed on disk (git, other editors) reload
   automatically unless you have unsaved edits.
 - **Entities** (button in the header): search, live state, attributes.
   **Insert** puts e.g. `ent.Sensor.Power` at the cursor.
@@ -208,7 +211,9 @@ The UI can run arbitrary code with full access to Home Assistant. Therefore:
 
 - Only **HA administrators** can log in. GoHomeAssistant uses HA's own
   OAuth login, checks `is_admin`, revokes the HA token it received and keeps
-  its own session (an `HttpOnly`, `SameSite=Lax` cookie, in memory).
+  its own session (an `HttpOnly`, `SameSite=Lax` cookie, valid 30 days).
+  Sessions survive restarts: `/data/gohomeassistant/sessions.json` (mode
+  0600) stores only SHA-256 hashes of the session tokens.
   Requests that change something must come from the UI's own origin.
 - As an add-on, only requests coming through HA Ingress (from the
   Supervisor) are accepted; HA does the login.
@@ -262,8 +267,7 @@ embeds.
 
 ## Known limitations
 
-- Login sessions are kept in memory: after a restart you log in again.
-  Debug mode is not kept across restarts either.
+- Debug mode is not kept across restarts.
 - While a program is paused in the debugger, HA events queue up (about 25
   minutes on a busy instance). Beyond that the project reconnects.
 - Each open project runs its own gopls (a few hundred MB of memory).

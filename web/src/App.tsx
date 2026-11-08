@@ -59,6 +59,8 @@ export function App() {
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [diff, setDiff] = useState<Diff | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [autoSave, setAutoSave] = useState(stored('gha.autosave') !== '0') // on by default
+  const autoSaveTimers = useRef<Record<string, number>>({})
   const onFilesRef = useRef<(p: string) => void>(() => {})
   const [bpVersion, setBpVersion] = useState(0)
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
@@ -298,25 +300,57 @@ export function App() {
     }
   }, [project, frameFile, openFile])
 
+  // writeFile saves the current content of a file (project/path key) and
+  // marks it clean if nothing changed meanwhile.
+  const writeFile = useCallback(
+    async (p: string, path: string) => {
+      const k = key(p, path)
+      clearTimeout(autoSaveTimers.current[k])
+      const content = current.current[k] ?? saved.current[k]
+      if (content === undefined || content === saved.current[k]) return
+      await api.writeFile(p, path, content)
+      saved.current[k] = content
+      const dir = statuses[p]?.dir
+      notifySaved(dir ? monaco.editor.getModel(monaco.Uri.parse(fileURI(dir, path))) : null)
+      if (current.current[k] === content) {
+        setDirty((d) => {
+          const n = new Set(d)
+          n.delete(k)
+          return n
+        })
+      }
+    },
+    [statuses],
+  )
+
+  // save: explicit save (⌘S, Save, Rebuild) formats with gofmt first.
   const save = useCallback(async () => {
     if (!open) return
-    const k = key(open.project, open.path)
     const editor = editorRef.current
     if (editor) await formatModel(editor) // gofmt via gopls
-    const content = current.current[k] ?? saved.current[k]
     try {
-      await api.writeFile(open.project, open.path, content)
-      notifySaved(editor?.getModel() ?? null)
-      saved.current[k] = content
-      setDirty((d) => {
-        const n = new Set(d)
-        n.delete(k)
-        return n
-      })
+      await writeFile(open.project, open.path)
     } catch (e) {
       setError(`Save failed: ${e}`)
     }
-  }, [open])
+  }, [open, writeFile])
+
+  // Auto save: 1.5 s after the last change, without formatting (the code
+  // must not move while you type). Every save hot-reloads the project.
+  const writeFileRef = useRef(writeFile)
+  writeFileRef.current = writeFile
+  const scheduleAutoSave = (p: string, path: string) => {
+    const k = key(p, path)
+    clearTimeout(autoSaveTimers.current[k])
+    autoSaveTimers.current[k] = window.setTimeout(() => {
+      writeFileRef.current(p, path).catch((e) => setError(`Auto save failed: ${e}`))
+    }, 1500)
+  }
+  const toggleAutoSave = (on: boolean) => {
+    setAutoSave(on)
+    store('gha.autosave', on ? '1' : '0')
+    if (!on) for (const t of Object.values(autoSaveTimers.current)) clearTimeout(t)
+  }
 
   const onChange = (value: string) => {
     if (!open) return
@@ -330,6 +364,7 @@ export function App() {
       else n.delete(k)
       return n
     })
+    if (isDirty && autoSave) scheduleAutoSave(open.project, open.path)
   }
 
   useEffect(() => {
@@ -477,7 +512,11 @@ export function App() {
               <button className="gha-ghost gha-icon-btn gha-danger-text" title="Delete project and all its files" onClick={() => setDeleting(true)}>
                 <TrashIcon /> Delete
               </button>
-              <button disabled={!open || !dirty.has(key(open.project, open.path))} onClick={save} title="⌘S / Ctrl+S">
+              <label className="gha-check" title="Save automatically 1.5 s after you stop typing (each save hot-reloads the project)">
+                <input type="checkbox" checked={autoSave} onChange={(e) => toggleAutoSave(e.target.checked)} />
+                Auto save
+              </label>
+              <button disabled={!open || !dirty.has(key(open.project, open.path))} onClick={save} title="Format and save (⌘S / Ctrl+S)">
                 Save
               </button>
             </>

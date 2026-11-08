@@ -115,6 +115,10 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	if err != nil {
 		return err
 	}
+	authn.SessionFile = filepath.Join(dataDir, "sessions.json")
+	if err := authn.LoadSessions(); err != nil {
+		log.Warn("cannot load login sessions, everyone has to log in again", "err", err)
+	}
 	web := server.New(mgr, bus, goVersion, log)
 	web.Auth = authn
 	web.SkipOriginCheck = authn.Mode == auth.Ingress
