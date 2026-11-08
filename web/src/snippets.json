@@ -1,0 +1,108 @@
+[
+  {
+    "name": "On state change",
+    "prefix": "onchange",
+    "description": "Run code when an entity's state changes (ignores attribute-only changes).",
+    "body": "${1:ent.Light.Kitchen}.OnChange(func(ch ha.StateChange) {\n\tif ch.Old == nil || ch.New == nil || ch.Old.State == ch.New.State {\n\t\treturn // attribute-only change, or entity added/removed\n\t}\n\tlog.Printf(\"%s: %s -> %s\", ch.EntityID, ch.Old.State, ch.New.State)\n\t$0\n})",
+    "imports": [
+      "log",
+      "gohomeassistant.local/ent",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "On turned on",
+    "prefix": "onturnon",
+    "description": "Run code when an entity switches to \"on\", e.g. a motion sensor.",
+    "body": "${1:ent.BinarySensor.Motion}.OnChange(func(ch ha.StateChange) {\n\tif ch.New != nil && ch.New.State == \"on\" && (ch.Old == nil || ch.Old.State != \"on\") {\n\t\t$0\n\t}\n})",
+    "imports": [
+      "gohomeassistant.local/ent",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "State held for a while",
+    "prefix": "holds",
+    "description": "Act when an entity stays in a state for a duration, e.g. no motion for 5 minutes. The timer restarts on every change.",
+    "body": "var ${3:timer} *time.Timer\n${1:ent.BinarySensor.Motion}.OnChange(func(ch ha.StateChange) {\n\tif $3 != nil {\n\t\t$3.Stop()\n\t}\n\tif ch.New == nil || ch.New.State != \"${2:off}\" {\n\t\treturn\n\t}\n\t$3 = time.AfterFunc(${4:5 * time.Minute}, func() {\n\t\tha.Default().Go(func() {\n\t\t\tif $1.Value() == \"$2\" { // still $2\n\t\t\t\t$0\n\t\t\t}\n\t\t})\n\t})\n})",
+    "imports": [
+      "time",
+      "gohomeassistant.local/ent",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "On custom event",
+    "prefix": "onevent",
+    "description": "React to an event fired on the HA event bus (e.g. from an automation's \"event\" action) and decode its data.",
+    "body": "err := ha.Default().OnEvent(\"${1:myevent}\", func(ev ha.Event) {\n\tvar data struct {\n\t\t${2:Value string `json:\"value\"`}\n\t}\n\tif err := json.Unmarshal(ev.Data, &data); err != nil {\n\t\tlog.Printf(\"$1: bad payload %s: %v\", ev.Data, err)\n\t\treturn\n\t}\n\tlog.Printf(\"$1 from %s: %+v\", ev.Origin, data)\n\t$0\n})\nif err != nil {\n\tlog.Fatalf(\"subscribe to $1: %v\", err)\n}",
+    "imports": [
+      "encoding/json",
+      "log",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "Event program",
+    "prefix": "eventprogram",
+    "description": "A complete program that reacts to a custom event with a typed payload. Insert into an empty file or in place of main.",
+    "body": "// The payload you send with \"${1:myevent}\".\ntype ${2:myEvent} struct {\n\tEntity string   `json:\"entity\"`\n\tState  int      `json:\"state\"`\n\tItems  []string `json:\"items\"`\n}\n\nfunc main() {\n\tc := ha.MustConnect()\n\n\terr := c.OnEvent(\"$1\", func(ev ha.Event) {\n\t\tvar data $2\n\t\tif err := json.Unmarshal(ev.Data, &data); err != nil {\n\t\t\tlog.Printf(\"$1: bad payload %s: %v\", ev.Data, err)\n\t\t\treturn\n\t\t}\n\t\tlog.Printf(\"$1 from %s at %s\", ev.Origin, ev.TimeFired.Format(\"15:04:05\"))\n\t\tlog.Printf(\"entity: %s, state: %d, items: %v\", data.Entity, data.State, data.Items)\n\t\t// react here, e.g. ent.Light.Kitchen.TurnOn(...)\n\t\t$0\n\t})\n\tif err != nil {\n\t\tlog.Fatalf(\"subscribe to $1: %v\", err)\n\t}\n\n\t_ = ent.Svc // keeps the ent import while it is unused; remove once you use ent\n\n\tc.Run()\n}",
+    "imports": [
+      "encoding/json",
+      "log",
+      "gohomeassistant.local/ent",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "Fire event",
+    "prefix": "fire",
+    "description": "Fire a custom event on the HA event bus.",
+    "body": "if err := ha.Default().FireEvent(\"${1:myevent}\", map[string]any{\"${2:key}\": ${3:\"value\"}}); err != nil {\n\tlog.Printf(\"fire $1: %v\", err)\n}",
+    "imports": [
+      "log",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "Turn on with parameters",
+    "prefix": "turnon",
+    "description": "Call a typed service with parameters.",
+    "body": "if err := ${1:ent.Light.Kitchen}.TurnOn(p.LightTurnOn{BrightnessPct: ${2:80}}); err != nil {\n\tlog.Printf(\"turn on: %v\", err)\n}",
+    "imports": [
+      "log",
+      "gohomeassistant.local/ent/p",
+      "gohomeassistant.local/ent"
+    ]
+  },
+  {
+    "name": "Read state",
+    "prefix": "state",
+    "description": "Read a numeric state and an attribute.",
+    "body": "if v, ok := ${1:ent.Sensor.Temperature}.Float(); ok {\n\tlog.Printf(\"$1 = %v %v\", v, $1.Attr(\"unit_of_measurement\"))\n}",
+    "imports": [
+      "log",
+      "gohomeassistant.local/ent"
+    ]
+  },
+  {
+    "name": "Every interval",
+    "prefix": "every",
+    "description": "Run code periodically. Runs on the handler goroutine, like event handlers.",
+    "body": "go func() {\n\tfor range time.Tick(${1:5 * time.Minute}) {\n\t\tha.Default().Go(func() {\n\t\t\t$0\n\t\t})\n\t}\n}()",
+    "imports": [
+      "time",
+      "ha gohomeassistant.local/sdk"
+    ]
+  },
+  {
+    "name": "After a delay",
+    "prefix": "after",
+    "description": "Run code once after a delay. Runs on the handler goroutine, like event handlers.",
+    "body": "time.AfterFunc(${1:10 * time.Second}, func() {\n\tha.Default().Go(func() {\n\t\t$0\n\t})\n})",
+    "imports": [
+      "time",
+      "ha gohomeassistant.local/sdk"
+    ]
+  }
+]

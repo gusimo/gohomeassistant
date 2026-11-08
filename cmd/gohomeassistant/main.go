@@ -123,6 +123,7 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	web.Auth = authn
 	web.SkipOriginCheck = authn.Mode == auth.Ingress
 	web.HA, web.Refs = client, gen.Refs
+	web.SnippetsFile = filepath.Join(dataDir, "snippets.json")
 	addr := env("GHA_HTTP_ADDR", ":8099")
 	srv := &http.Server{Addr: addr, Handler: web.Handler()}
 	go func() {

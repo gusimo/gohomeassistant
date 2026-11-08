@@ -281,3 +281,15 @@ button.gha-danger-solid { background: var(--err); border-color: var(--err); colo
 }
 .gha-modal .gha-search { display: block; width: 100%; margin: 0 0 14px; }
 .gha-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Snippets panel (shares the entity panel's layout) */
+.gha-snippet-desc { font-family: inherit; white-space: normal; }
+.gha-snippet-prefix { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.gha-badge { font-size: 10px; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); }
+.gha-snippet-body { font-family: var(--mono); font-size: 12px; margin: 0; padding: 6px; overflow-x: auto; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; tab-size: 4; }
+.gha-snippet-imports { font-size: 11px; margin-top: 4px; word-break: break-word; }
+.gha-snippet-form { padding: 8px 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.gha-snippet-form label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.gha-snippet-form input, .gha-snippet-form textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+.gha-snippet-form textarea { font-family: var(--mono); resize: vertical; tab-size: 4; white-space: pre; }
+.gha-snippet-form p { margin: 0; }

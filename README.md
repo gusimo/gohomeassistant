@@ -162,6 +162,15 @@ project, downloaded on build (this needs internet access).
   automatically unless you have unsaved edits.
 - **Entities** (button in the header): search, live state, attributes.
   **Insert** puts e.g. `ent.Sensor.Power` at the cursor.
+- **Snippets** (button in the header): ready-made code such as *On state
+  change*, *On custom event*, *State held for a while*, *Turn on with
+  parameters*, timers. **Insert** puts one at the cursor; Tab jumps between
+  its fields and missing imports are added. In the editor, typing a snippet's
+  prefix (e.g. `onevent`) offers it in the completion list.
+  Your own snippets: **+ New** (prefilled with the code selected in the
+  editor) or **Customize** on a built-in one. They are stored in
+  `/data/gohomeassistant/snippets.json` and shared by all users. Placeholders:
+  `$1`, `${1:default}`, `$0` for the final cursor; a literal `$` is `\$`.
 - **Debug** tab: turn on *Debug mode* for a project. It is rebuilt without
   optimizations and runs under Delve, but keeps running normally until a
   breakpoint is hit. Click left of a line number to set a breakpoint. You

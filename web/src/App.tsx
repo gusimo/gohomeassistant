@@ -3,6 +3,8 @@ import { api, parseBuildError, subscribe, type Commit, type FileInfo, type GitFi
 import { DiffView, Editor } from './Editor'
 import { History, SourceControl, statusLetter } from './Git'
 import { Entities } from './Entities'
+import { Snippets } from './Snippets'
+import { insertSnippet, registerSnippetCompletion, setOwnSnippets, type Snippet } from './snippetEditor'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { RebuildIcon, TrashIcon } from './Icons'
 import { DebugPanel, useDebugger, type Breakpoints } from './Debug'
@@ -53,7 +55,10 @@ export function App() {
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [onlyProject, setOnlyProject] = useState(stored('gha.onlyProject') === '1')
-  const [showEntities, setShowEntities] = useState(stored('gha.entities') === '1')
+  const [side, setSide] = useState<'entities' | 'snippets' | null>(
+    stored('gha.side') === 'snippets' ? 'snippets' : stored('gha.side') === 'entities' || stored('gha.entities') === '1' ? 'entities' : null,
+  )
+  const [ownSnippets, setOwnSnippetsState] = useState<Snippet[]>([])
   const [me, setMe] = useState<Me | null>(null)
   const [bottomTab, setBottomTab] = useState<'logs' | 'debug' | 'history'>('logs')
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
@@ -69,11 +74,20 @@ export function App() {
 
   useEffect(() => {
     api.me().then(setMe, () => {})
+    registerSnippetCompletion()
+    api.snippets().then((l) => (setOwnSnippets(l), setOwnSnippetsState(l)), () => {})
   }, [])
 
-  const toggleEntities = (v: boolean) => {
-    setShowEntities(v)
-    store('gha.entities', v ? '1' : '0')
+  const toggleSide = (panel: 'entities' | 'snippets') => {
+    const next = side === panel ? null : panel
+    setSide(next)
+    store('gha.side', next ?? '')
+  }
+
+  const saveOwnSnippets = async (list: Snippet[]) => {
+    await api.saveSnippets(list)
+    setOwnSnippets(list)
+    setOwnSnippetsState(list)
   }
 
   // Insert text at the cursor of the open file.
@@ -495,8 +509,11 @@ export function App() {
               </span>
               {status && <span className={`gha-status ${dotClass(status)}`}>{statusText(status)}</span>}
               <span className="gha-spacer" />
-              <button className={`gha-ghost${showEntities ? ' gha-toggled' : ''}`} onClick={() => toggleEntities(!showEntities)}>
+              <button className={`gha-ghost${side === 'entities' ? ' gha-toggled' : ''}`} onClick={() => toggleSide('entities')}>
                 Entities
+              </button>
+              <button className={`gha-ghost${side === 'snippets' ? ' gha-toggled' : ''}`} onClick={() => toggleSide('snippets')}>
+                Snippets
               </button>
               <button
                 className="gha-ghost gha-icon-btn"
@@ -570,7 +587,20 @@ export function App() {
             <div className="gha-empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
           )}
         </div>
-        {showEntities && <Entities onInsert={insert} onClose={() => toggleEntities(false)} />}
+        {side === 'entities' && <Entities onInsert={insert} onClose={() => toggleSide('entities')} />}
+        {side === 'snippets' && (
+          <Snippets
+            own={ownSnippets}
+            onSaveOwn={saveOwnSnippets}
+            onInsert={(sn) => editorRef.current && insertSnippet(editorRef.current, sn)}
+            selection={() => {
+              const ed = editorRef.current
+              const sel = ed?.getSelection()
+              return ed && sel ? (ed.getModel()?.getValueInRange(sel) ?? '') : ''
+            }}
+            onClose={() => toggleSide('snippets')}
+          />
+        )}
         </div>
 
         <section className="gha-bottom">

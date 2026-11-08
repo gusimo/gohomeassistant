@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gusimo/gohomeassistant/internal/auth"
@@ -52,6 +53,9 @@ type Server struct {
 	// HA and Refs power the entity browser (optional).
 	HA   *ha.Client
 	Refs func() map[string]string
+	// SnippetsFile stores the user's own snippets.
+	SnippetsFile string
+	snippetsMu   sync.Mutex
 }
 
 func New(mgr *project.Manager, bus *logbus.Bus, goVersion string, log *slog.Logger) *Server {
@@ -95,6 +99,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{name}/git/discard", s.gitDiscard)
 	mux.HandleFunc("POST /api/projects/{name}/git/restore", s.gitRestore)
 	mux.HandleFunc("GET /api/projects/{name}/dap", s.dap)
+	if s.SnippetsFile != "" {
+		mux.HandleFunc("GET /api/snippets", s.getSnippets)
+		mux.HandleFunc("PUT /api/snippets", s.putSnippets)
+	}
 
 	if app, err := fs.Sub(dist, "dist/app"); err == nil {
 		if _, err := fs.Stat(app, "index.html"); err == nil {

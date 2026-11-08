@@ -1,4 +1,5 @@
 // All URLs are relative so the UI works under HA Ingress' path prefix.
+import type { Snippet } from './snippetEditor'
 
 export type Status = {
   name: string
@@ -82,6 +83,8 @@ export const api = {
     discard: (p: string, path: string) => req('POST', `${proj(p)}/git/discard`, JSON.stringify({ path })),
     restore: (p: string, path: string, rev: string) => req('POST', `${proj(p)}/git/restore`, JSON.stringify({ path, rev })),
   },
+  snippets: async (): Promise<Snippet[]> => (await req('GET', './api/snippets')).json(),
+  saveSnippets: (list: Snippet[]) => req('PUT', './api/snippets', JSON.stringify(list)),
   me: async (): Promise<Me> => (await req('GET', './api/me')).json(),
   logout: () => req('POST', './auth/logout'),
 }
