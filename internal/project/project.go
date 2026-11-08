@@ -162,7 +162,9 @@ func (p *Project) build(ctx context.Context, debug bool) (string, error) {
 	bin := filepath.Join(out, fmt.Sprintf("app-%d", time.Now().UnixNano()))
 	// An empty build ID makes the binary depend only on the compiled code,
 	// so e.g. regenerated entities the project doesn't use don't restart it.
-	args := []string{"build", "-ldflags=-buildid=", "-o", bin}
+	// -buildvcs=false: git state (commits, dirty flag) must not change the
+	// binary, or every commit would restart the project.
+	args := []string{"build", "-buildvcs=false", "-ldflags=-buildid=", "-o", bin}
 	if debug {
 		args = append(args, "-gcflags=all=-N -l") // no optimizations: accurate stepping and variables
 	}

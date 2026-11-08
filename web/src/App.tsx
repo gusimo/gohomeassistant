@@ -3,6 +3,8 @@ import { api, parseBuildError, subscribe, type Commit, type FileInfo, type GitFi
 import { DiffView, Editor } from './Editor'
 import { History, SourceControl, statusLetter } from './Git'
 import { Entities } from './Entities'
+import { DeleteProjectDialog } from './DeleteProjectDialog'
+import { RebuildIcon, TrashIcon } from './Icons'
 import { DebugPanel, useDebugger, type Breakpoints } from './Debug'
 import { Logs } from './Logs'
 import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
@@ -56,6 +58,7 @@ export function App() {
   const [bottomTab, setBottomTab] = useState<'logs' | 'debug' | 'history'>('logs')
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [diff, setDiff] = useState<Diff | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const onFilesRef = useRef<(p: string) => void>(() => {})
   const [bpVersion, setBpVersion] = useState(0)
   const saved = useRef<Record<string, string>>({}) // last loaded/saved content per file
@@ -204,10 +207,13 @@ export function App() {
   // Files changed on disk (save, git, external editor): refresh lists and
   // reload open files that have no unsaved edits.
   const reloadTimer = useRef(0)
+  const projectRef = useRef(project)
+  projectRef.current = project
   onFilesRef.current = (p) => {
     if (p !== project) return
     clearTimeout(reloadTimer.current)
     reloadTimer.current = window.setTimeout(async () => {
+      if (projectRef.current !== p) return // e.g. just deleted
       refreshFiles(p)
       refreshGit(p)
       for (const k of Object.keys(saved.current)) {
@@ -457,10 +463,16 @@ export function App() {
               <button className={`gha-ghost${showEntities ? ' gha-toggled' : ''}`} onClick={() => toggleEntities(!showEntities)}>
                 Entities
               </button>
-              <button className="gha-ghost" onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}>
-                Rebuild
+              <button
+                className="gha-ghost gha-icon-btn"
+                title="Rebuild and restart the project"
+                onClick={() => api.rebuild(project).catch((e) => setError(String(e)))}
+              >
+                <RebuildIcon /> Rebuild
               </button>
-              <ConfirmButton label="Delete project" title="Delete project and all its files" onConfirm={deleteProject} />
+              <button className="gha-ghost gha-icon-btn gha-danger-text" title="Delete project and all its files" onClick={() => setDeleting(true)}>
+                <TrashIcon /> Delete
+              </button>
               <button disabled={!open || !dirty.has(key(open.project, open.path))} onClick={save} title="⌘S / Ctrl+S">
                 Save
               </button>
@@ -558,6 +570,16 @@ export function App() {
           )}
         </section>
       </main>
+      {deleting && project && (
+        <DeleteProjectDialog
+          name={project}
+          onCancel={() => setDeleting(false)}
+          onConfirm={async () => {
+            await deleteProject()
+            setDeleting(false)
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -124,7 +124,7 @@ export function Entities({ onInsert, onClose }: Props) {
 
 // copyText also works on plain http (no secure context), where the
 // Clipboard API is unavailable.
-function copyText(text: string) {
+export function copyText(text: string) {
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
   } else fallbackCopy(text)

@@ -251,3 +251,33 @@ button.gha-toggled { color: var(--text); background: var(--active); }
 .gha-commit-files { list-style: none; margin: 0; padding: 2px 0 4px 70px; font-family: var(--mono); }
 .gha-commit-files li { display: flex; gap: 8px; padding: 1px 0; cursor: pointer; }
 .gha-commit-files li:hover { color: var(--accent); }
+
+/* Icon buttons */
+button.gha-icon-btn { display: inline-flex; align-items: center; gap: 5px; }
+button.gha-icon-btn svg { flex: none; }
+button.gha-danger-text:hover { color: var(--err); }
+button.gha-danger-solid { background: var(--err); border-color: var(--err); color: #fff; }
+
+/* Modal */
+.gha-modal-backdrop {
+  position: fixed; inset: 0; z-index: 100; padding: 16px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.gha-modal {
+  width: 100%; max-width: 440px; padding: 18px 20px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.gha-modal h2 { margin: 0 0 8px; font-size: 16px; }
+.gha-modal p { margin: 0 0 10px; color: var(--muted); }
+.gha-modal p strong { color: var(--text); }
+.gha-modal-label { margin-bottom: 4px !important; color: var(--text) !important; }
+.gha-copy-name { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.gha-copy-name code {
+  font-family: var(--mono); font-size: 13px; padding: 2px 6px; user-select: all;
+  background: var(--bg-side); border: 1px solid var(--border); border-radius: 4px;
+}
+.gha-modal .gha-search { display: block; width: 100%; margin: 0 0 14px; }
+.gha-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }

@@ -3,6 +3,7 @@ package project
 import (
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -66,6 +67,17 @@ func TestBuildIsReproducible(t *testing.T) {
 	p := newProject(m, "demo")
 	var sums [2][32]byte
 	for i := range sums {
+		if i == 1 {
+			// Becoming a git repository (with a commit) must not change the
+			// binary either: builds don't stamp VCS information.
+			for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"}} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v %s", args, err, out)
+				}
+			}
+		}
 		bin, err := p.build(t.Context(), false)
 		if err != nil {
 			t.Fatal(err)
