@@ -1,0 +1,23 @@
+GoHomeAssistant
+Copyright (C) 2026 Guido Simon (https://github.com/gusimo)
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License version 3, as
+published by the Free Software Foundation (see LICENSE).
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+License for more details.
+
+Additional term under section 7(b) of the AGPL-3.0 (author attribution):
+
+  Copies and modified versions of this program, and works based on it, must
+  keep this NOTICE file and must credit the original author in their
+  README or equivalent documentation, for example:
+
+    Based on GoHomeAssistant by Guido Simon (https://github.com/gusimo/gohomeassistant)
+
+  Modified versions must also be marked as changed from the original.
+
+Third-party components and their licenses: see THIRD_PARTY_NOTICES.md.

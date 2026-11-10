@@ -67,7 +67,7 @@ addon)
   rm -rf dist/addon
   mkdir -p "$out"
   cp addon/config.yaml addon/DOCS.md addon/README.md addon/CHANGELOG.md addon/icon.png "$out/"
-  git ls-files -z -- Dockerfile .dockerignore go.mod go.sum cmd internal sdk web \
+  git ls-files -z -- Dockerfile .dockerignore LICENSE NOTICE THIRD_PARTY_NOTICES.md go.mod go.sum cmd internal sdk web \
     | tar --null -T - -cf - | tar -xf - -C "$out"
   untracked=$(git ls-files --others --exclude-standard -- cmd internal sdk web)
   if [[ -n $untracked ]]; then

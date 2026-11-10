@@ -30,6 +30,7 @@ RUN apk add --no-cache git tini
 COPY --from=build /gohomeassistant /usr/local/bin/gohomeassistant
 COPY --from=build /out/gopls /out/dlv /usr/local/bin/
 COPY sdk /opt/gohomeassistant/sdk
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/gohomeassistant/
 # Build and module caches live in the data volume, so restarts are fast.
 ENV GOCACHE=/data/gohomeassistant/cache \
     GOMODCACHE=/data/gohomeassistant/mod \

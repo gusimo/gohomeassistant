@@ -297,3 +297,16 @@ embeds.
 5. Git: ✅ local; next: remotes (push/pull with an SSH key or token)
 6. ✅ Home Assistant add-on (local install); next: an add-on repository with
    prebuilt images, installable by URL
+
+## License
+
+GoHomeAssistant is free software under the
+[GNU Affero General Public License v3.0](LICENSE). You may use, change and
+share it. If you distribute it, or run a changed version as a service for
+others, you must publish the full source under the same license.
+
+Additional term (AGPL section 7(b)): forks and works based on it must keep the
+[NOTICE](NOTICE) file and credit the original author, for example
+"Based on GoHomeAssistant by Guido Simon (https://github.com/gusimo/gohomeassistant)".
+
+Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
