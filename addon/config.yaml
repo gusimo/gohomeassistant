@@ -1,10 +1,13 @@
-# Home Assistant add-on definition. `./start.sh addon` assembles an
-# installable add-on folder from this and the sources.
+# Home Assistant app definition. Installed from the repository, HA pulls the
+# prebuilt image (built by .github/workflows/image.yml). `./start.sh addon`
+# assembles a local app from this and the sources, without the image line, so
+# HA builds it itself.
 name: GoHomeAssistant
 version: "0.1.2"
 slug: gohomeassistant
 description: Write automations in Go, with a web IDE, hot reload, debugger and git
 url: https://github.com/gusimo/gohomeassistant
+image: ghcr.io/gusimo/{arch}-gohomeassistant
 arch:
   - amd64
   - aarch64

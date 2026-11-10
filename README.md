@@ -20,34 +20,61 @@ changed.
 - **Live logs** of every project
 - **Login with your Home Assistant account** (administrators only)
 
-## Install as a Home Assistant add-on
+![Editor with the entity browser and live logs](docs/screenshots/editor.png)
+
+| Completion for your entities | Snippets |
+|---|---|
+| ![Completion lists the covers of your HA](docs/screenshots/completion.png) | ![Snippets panel](docs/screenshots/snippets.png) |
+
+## Install as a Home Assistant app
 
 For HA OS or HA Supervised. The UI then lives in the HA sidebar, behind HA's
-own login (administrators only).
+own login (administrators only). Since HA 2026.2, add-ons are called *apps*.
+
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fgusimo%2Fgohomeassistant)
+
+1. HA → *Settings* → *Apps* → *Install app* → menu (⋮, top right) →
+   *Repositories*, add `https://github.com/gusimo/gohomeassistant`
+   (or use the button above).
+2. Open **GoHomeAssistant** in the app store, *Install*, *Start*, and enable
+   *Show in sidebar*.
+
+HA downloads a prebuilt image (amd64 or aarch64), so installing takes about a
+minute. New versions show up as updates in HA.
+
+Projects live in `addon_configs/<id>_gohomeassistant/projects` (reachable via
+Samba/SSH/Studio Code Server, included in backups). The app talks to HA
+through the Supervisor and is only reachable through Ingress.
+
+If it doesn't show up, the Supervisor rejected it: *Settings* → *System* →
+*Logs* → menu → *Supervisor*, look for "gohomeassistant".
+
+### Local install (development)
+
+To try changes before publishing them, build a local app; HA then builds the
+image itself from the sources (a few minutes):
 
 ```sh
 ./start.sh addon     # builds dist/addon/gohomeassistant (and a .tar.gz)
 ```
 
-(Since HA 2026.2, add-ons are called *apps*; the format is the same.)
-
 1. Copy the folder `dist/addon/gohomeassistant` into the `local_apps` folder
    of your HA: via the Samba app (share `local_apps`), or with the Terminal &
-   SSH app: `scp -r dist/addon/gohomeassistant root@<your-ha>:/local_apps/`
-   (older HA versions: `addons` instead of `local_apps`).
-2. HA → *Settings* → *Apps* → *Install app* (opens the App store) → menu (⋮,
-   top right) → *Check for updates*; reload the page if needed.
-3. Under *Local apps*, open **GoHomeAssistant**, *Install* (it is built on
-   your HA, which takes a few minutes), *Start*.
+   SSH app: `scp -r dist/addon/gohomeassistant root@<your-ha>:/local_apps/`.
+2. HA → *Settings* → *Apps* → *Install app* → menu (⋮) → *Check for updates*;
+   reload the page if needed.
+3. Under *Local apps*, open **GoHomeAssistant**, *Install*, *Start*.
 
-If it doesn't show up, the Supervisor rejected it: *Settings* → *System* →
-*Logs* → menu → *Supervisor*, look for "gohomeassistant".
+To update, bump `version` in `addon/config.yaml`, rebuild, copy again, *Check
+for updates* and *Update*. Don't run the local and the repository app at the
+same time: each runs its own projects, so your automations would run twice.
 
-In the add-on, projects live in `addon_configs/<id>_gohomeassistant/projects`
-(reachable via Samba/SSH, included in backups). It talks to HA through the
-Supervisor and is only reachable through Ingress. To update, rebuild with
-`./start.sh addon`, bump `version` in `addon/config.yaml`, copy again and
-*Rebuild* in the add-on page.
+### Publishing a version
+
+Bump `version` in `addon/config.yaml` (and add a `CHANGELOG.md` entry) and
+push to `main`. The *Image* workflow builds
+`ghcr.io/gusimo/{amd64,aarch64}-gohomeassistant:<version>`; HA offers the
+update once the version is in the repository.
 
 ## Quick start (standalone Docker)
 
@@ -261,7 +288,8 @@ The UI can run arbitrary code with full access to Home Assistant. Therefore:
 | `internal/logbus` | Log and status fan-out to the UI |
 | `sdk/` | The module projects import (no dependencies) |
 | `web/` | The UI (React, Vite, Monaco), embedded into the binary |
-| `addon/` | Home Assistant add-on definition (`config.yaml`, docs) |
+| `addon/` | Home Assistant app definition (`config.yaml`, docs) |
+| `repository.yaml`, `.github/workflows/` | app repository and image build |
 
 ## Development
 
@@ -295,8 +323,7 @@ embeds.
 3. ✅ Web UI: editor, completion, logs, entity browser, HA login
 4. ✅ Debugging in the UI
 5. Git: ✅ local; next: remotes (push/pull with an SSH key or token)
-6. ✅ Home Assistant add-on (local install); next: an add-on repository with
-   prebuilt images, installable by URL
+6. ✅ Home Assistant app: repository with prebuilt images, local install
 
 ## License
 

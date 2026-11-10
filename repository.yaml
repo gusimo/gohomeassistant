@@ -1,0 +1,5 @@
+# Home Assistant app repository: add https://github.com/gusimo/gohomeassistant
+# in HA under Settings > Apps > Install app > ⋮ > Repositories.
+name: GoHomeAssistant
+url: https://github.com/gusimo/gohomeassistant
+maintainer: Guido Simon (https://github.com/gusimo)

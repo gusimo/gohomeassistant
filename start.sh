@@ -66,7 +66,9 @@ addon)
   out=dist/addon/gohomeassistant
   rm -rf dist/addon
   mkdir -p "$out"
-  cp addon/config.yaml addon/DOCS.md addon/README.md addon/CHANGELOG.md addon/icon.png "$out/"
+  cp addon/DOCS.md addon/README.md addon/CHANGELOG.md addon/icon.png "$out/"
+  # Without the image line HA builds the app from the sources in the folder.
+  grep -v '^image:' addon/config.yaml > "$out/config.yaml"
   git ls-files -z -- Dockerfile .dockerignore LICENSE NOTICE THIRD_PARTY_NOTICES.md go.mod go.sum cmd internal sdk web \
     | tar --null -T - -cf - | tar -xf - -C "$out"
   untracked=$(git ls-files --others --exclude-standard -- cmd internal sdk web)
