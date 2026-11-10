@@ -9,3 +9,5 @@
 !/internal/server/dist/.gitkeep
 /web/node_modules/
 dist/
+# macOS Finder files
+.DS_Store
