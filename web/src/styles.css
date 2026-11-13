@@ -293,3 +293,69 @@ button.gha-danger-solid { background: var(--err); border-color: var(--err); colo
 .gha-snippet-form input, .gha-snippet-form textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
 .gha-snippet-form textarea { font-family: var(--mono); resize: vertical; tab-size: 4; white-space: pre; }
 .gha-snippet-form p { margin: 0; }
+
+/* Header action buttons: a plain row on desktop, own scrollable row on phones */
+.gha-actions { display: contents; }
+.gha-drawer-backdrop { display: none; }
+
+/* Phones: sidebar as a drawer, one full-height pane (code, logs, debug,
+   history) chosen with the tabs at the bottom. */
+@media (max-width: 760px) {
+  body { font-size: 14px; }
+  .gha-app { display: block; height: 100dvh; }
+  .gha-main { height: 100dvh; }
+
+  .gha-sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
+    width: min(300px, 85vw); transform: translateX(-100%); transition: transform .2s ease;
+  }
+  .gha-sidebar.gha-drawer-open { transform: none; box-shadow: 4px 0 20px rgba(0, 0, 0, .3); }
+  .gha-drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .4); }
+
+  /* Touch targets; hover-only buttons always visible */
+  button { min-height: 36px; padding: 6px 12px; }
+  button.gha-small { min-height: 32px; padding: 4px 10px; }
+  .gha-list li { min-height: 40px; }
+  .gha-list li .gha-ghost { visibility: visible; }
+  .gha-check input { width: 18px; height: 18px; }
+
+  /* Header: menu, file and status on the first row, the actions below */
+  .gha-editor-header { flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; }
+  button.gha-menu-btn { font-size: 18px; padding: 2px 10px; }
+  .gha-editor-header .gha-crumb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gha-editor-header .gha-spacer { display: none; }
+  .gha-actions {
+    display: flex; align-items: center; gap: 4px; flex-basis: 100%;
+    overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+  }
+  .gha-actions > * { flex: none; }
+  .gha-actions button { padding: 6px 8px; }
+  .gha-actions .gha-btn-label { display: none; } /* Rebuild, Delete: icon only */
+  .gha-actions > button:last-child { margin-left: auto; }
+
+  /* Entities and snippets cover the editor */
+  .gha-editor-row { position: relative; }
+  .gha-entities { position: absolute; inset: 0; z-index: 5; width: auto; border-left: none; }
+
+  /* Bottom panel: tabs at the bottom of the screen */
+  .gha-bottom { flex-direction: column-reverse; flex: none; height: auto; }
+  .gha-tabs { padding: 0 0 env(safe-area-inset-bottom); border-bottom: none; }
+  button.gha-tab {
+    flex: 1; justify-content: center; padding: 8px 4px; min-height: 44px;
+    border-bottom: none; border-top: 2px solid transparent;
+  }
+  button.gha-tab.gha-active { border-top-color: var(--accent); }
+  .gha-pane-panel .gha-editor-row { display: none; }
+  .gha-pane-panel .gha-bottom { flex: 1; min-height: 0; }
+  .gha-pane-split .gha-bottom { height: 50%; }
+
+  /* Logs: message on its own line */
+  .gha-log-line { flex-wrap: wrap; gap: 0 8px; padding: 3px 8px; }
+  .gha-log-project { min-width: 0; }
+  .gha-log-msg { flex-basis: 100%; }
+
+  /* Debugger: call stack above variables */
+  .gha-debug-toolbar { padding: 4px 8px; }
+  .gha-debug-body { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
+  .gha-debug-col { border-right: none; border-bottom: 1px solid var(--border); }
+}

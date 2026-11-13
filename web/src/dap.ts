@@ -98,7 +98,11 @@ export class DAPClient {
         resolve: (b) => (clearTimeout(timer), resolve(b)),
         reject: (e) => (clearTimeout(timer), reject(e)),
       })
-      this.ws.send(JSON.stringify({ seq, type: 'request', command, arguments: args }))
+      // Wait for the connection: sending while it is still opening throws.
+      this.open.then(
+        () => this.ws.send(JSON.stringify({ seq, type: 'request', command, arguments: args })),
+        (e) => this.pending.get(seq)?.reject(e),
+      )
     })
   }
 

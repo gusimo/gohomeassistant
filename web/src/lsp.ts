@@ -17,6 +17,7 @@ export class LSPClient {
   private versions = new Map<string, number>()
   private ready: Promise<void>
   private closed = false
+  private initialized = false // models created before this are opened by initialize
 
   // rootUri: file:// URI of the project directory.
   constructor(url: string, readonly rootUri: string) {
@@ -102,6 +103,7 @@ export class LSPClient {
       })
     })
     this.send({ method: 'initialized', params: {} })
+    this.initialized = true
     // Open the models of this project that already exist.
     for (const m of monaco.editor.getModels()) if (this.owns(m)) this.didOpen(m)
   }
@@ -132,6 +134,7 @@ export class LSPClient {
 
   // Full-document sync: simple and cheap for automation-sized files.
   didOpen(model: monaco.editor.ITextModel) {
+    if (!this.initialized || this.closed) return
     const uri = model.uri.toString()
     this.versions.set(uri, model.getVersionId())
     this.send({

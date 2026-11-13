@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- Phone layout: projects and files in a ☰ drawer, all editor buttons
+  reachable, Code / Logs / Debug / History as tabs at the bottom. While
+  debugging, the code is shown above the debug panel.
+- Fix: no browser error when a file is opened while code completion is still
+  connecting, or when debug mode is switched quickly.
+
 ## 0.1.2
 
 - Fix: required service parameters are always sent, even when zero

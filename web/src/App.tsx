@@ -14,16 +14,19 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 const MAX_LOGS = 5000
 
-function useDarkMode() {
-  const q = useMemo(() => window.matchMedia('(prefers-color-scheme: dark)'), [])
-  const [dark, setDark] = useState(q.matches)
+function useMedia(query: string) {
+  const q = useMemo(() => window.matchMedia(query), [query])
+  const [matches, setMatches] = useState(q.matches)
   useEffect(() => {
-    const f = (e: MediaQueryListEvent) => setDark(e.matches)
+    const f = (e: MediaQueryListEvent) => setMatches(e.matches)
     q.addEventListener('change', f)
     return () => q.removeEventListener('change', f)
   }, [q])
-  return dark
+  return matches
 }
+
+// Phone layout: sidebar as a drawer, one full-screen pane at a time.
+const MOBILE = '(max-width: 760px)'
 
 function stored(key: string): string | null {
   try {
@@ -45,7 +48,10 @@ type Diff = { path: string; title: string; original: string; modified: string; r
 const key = (project: string, path: string) => `${project}/${path}`
 
 export function App() {
-  const dark = useDarkMode()
+  const dark = useMedia('(prefers-color-scheme: dark)')
+  const mobile = useMedia(MOBILE)
+  const [drawer, setDrawer] = useState(false) // mobile: sidebar open
+  const [pane, setPane] = useState<'code' | 'panel'>('code') // mobile: editor or bottom panel
   const [statuses, setStatuses] = useState<Record<string, Status>>({})
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [connected, setConnected] = useState(false)
@@ -82,6 +88,11 @@ export function App() {
     const next = side === panel ? null : panel
     setSide(next)
     store('gha.side', next ?? '')
+    if (next) setPane('code')
+  }
+  // On a phone the panel covers the editor: close it after inserting.
+  const closeSideOnMobile = () => {
+    if (mobile) setSide(null)
   }
 
   const saveOwnSnippets = async (list: Snippet[]) => {
@@ -305,7 +316,10 @@ export function App() {
 
   // When the debugger stops, show the Debug tab and the paused line.
   useEffect(() => {
-    if (dbg.state === 'stopped') setBottomTab('debug')
+    if (dbg.state === 'stopped') {
+      setBottomTab('debug')
+      setPane('panel')
+    }
   }, [dbg.state])
   useEffect(() => {
     if (project && frameFile) {
@@ -434,9 +448,19 @@ export function App() {
     }
   }
 
+  // While debugging, a phone shows the code above the debug panel.
+  const paneClass = pane === 'panel' && bottomTab === 'debug' && status?.debug ? 'split' : pane
+  type Tab = 'logs' | 'debug' | 'history'
+  const tabClass = (t: Tab) => (bottomTab === t && (!mobile || pane === 'panel') ? 'gha-tab gha-active' : 'gha-tab')
+  const showTab = (t: Tab) => {
+    setBottomTab(t)
+    setPane('panel')
+  }
+
   return (
     <div className="gha-app">
-      <aside className="gha-sidebar">
+      {mobile && drawer && <div className="gha-drawer-backdrop" onClick={() => setDrawer(false)} />}
+      <aside className={`gha-sidebar${drawer ? ' gha-drawer-open' : ''}`}>
         <div className="gha-brand">
           <img className="gha-logo" src="./icon.png" alt="" />
           GoHomeAssistant
@@ -475,6 +499,8 @@ export function App() {
                   onClick={() => {
                     setDiff(null)
                     openFile(project, f.path)
+                    setDrawer(false)
+                    setPane('code')
                   }}
                 >
                   <span className="gha-file-name">
@@ -499,8 +525,13 @@ export function App() {
         )}
       </aside>
 
-      <main className="gha-main">
+      <main className={`gha-main${mobile ? ` gha-pane-${paneClass}` : ''}`}>
         <header className="gha-panel-header gha-editor-header">
+          {mobile && (
+            <button className="gha-ghost gha-menu-btn" title="Projects and files" onClick={() => setDrawer(true)}>
+              ☰
+            </button>
+          )}
           {projectExists && project ? (
             <>
               <span className="gha-crumb">
@@ -509,6 +540,7 @@ export function App() {
               </span>
               {status && <span className={`gha-status ${dotClass(status)}`}>{statusText(status)}</span>}
               <span className="gha-spacer" />
+              <div className="gha-actions">
               <button className={`gha-ghost${side === 'entities' ? ' gha-toggled' : ''}`} onClick={() => toggleSide('entities')}>
                 Entities
               </button>
@@ -524,10 +556,10 @@ export function App() {
                   api.rebuild(project).catch((e) => setError(String(e)))
                 }}
               >
-                <RebuildIcon /> Rebuild
+                <RebuildIcon /> <span className="gha-btn-label">Rebuild</span>
               </button>
               <button className="gha-ghost gha-icon-btn gha-danger-text" title="Delete project and all its files" onClick={() => setDeleting(true)}>
-                <TrashIcon /> Delete
+                <TrashIcon /> <span className="gha-btn-label">Delete</span>
               </button>
               <label className="gha-check" title="Save automatically 1.5 s after you stop typing (each save hot-reloads the project)">
                 <input type="checkbox" checked={autoSave} onChange={(e) => toggleAutoSave(e.target.checked)} />
@@ -536,6 +568,7 @@ export function App() {
               <button disabled={!open || !dirty.has(key(open.project, open.path))} onClick={save} title="Format and save (⌘S / Ctrl+S)">
                 Save
               </button>
+              </div>
             </>
           ) : (
             <span className="gha-crumb">Select or create a project</span>
@@ -587,12 +620,23 @@ export function App() {
             <div className="gha-empty">{projectExists ? 'Select a file' : 'No project selected'}</div>
           )}
         </div>
-        {side === 'entities' && <Entities onInsert={insert} onClose={() => toggleSide('entities')} />}
+        {side === 'entities' && (
+          <Entities
+            onInsert={(text) => {
+              insert(text)
+              closeSideOnMobile()
+            }}
+            onClose={() => toggleSide('entities')}
+          />
+        )}
         {side === 'snippets' && (
           <Snippets
             own={ownSnippets}
             onSaveOwn={saveOwnSnippets}
-            onInsert={(sn) => editorRef.current && insertSnippet(editorRef.current, sn)}
+            onInsert={(sn) => {
+              if (editorRef.current) insertSnippet(editorRef.current, sn)
+              closeSideOnMobile()
+            }}
             selection={() => {
               const ed = editorRef.current
               const sel = ed?.getSelection()
@@ -605,20 +649,25 @@ export function App() {
 
         <section className="gha-bottom">
           <nav className="gha-tabs">
-            <button className={bottomTab === 'logs' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('logs')}>
+            {mobile && (
+              <button className={pane === 'code' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setPane('code')}>
+                Code
+              </button>
+            )}
+            <button className={tabClass('logs')} onClick={() => showTab('logs')}>
               Logs
             </button>
-            <button className={bottomTab === 'debug' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('debug')}>
+            <button className={tabClass('debug')} onClick={() => showTab('debug')}>
               Debug
               {status?.debug && <span className={`gha-dot gha-dbg-dot gha-dbg-${dbg.state}`} />}
             </button>
             {gitStatus?.repo && (
-              <button className={bottomTab === 'history' ? 'gha-tab gha-active' : 'gha-tab'} onClick={() => setBottomTab('history')}>
+              <button className={tabClass('history')} onClick={() => showTab('history')}>
                 History
               </button>
             )}
           </nav>
-          {bottomTab === 'logs' || !projectExists || !project ? (
+          {mobile && pane === 'code' ? null : bottomTab === 'logs' || !projectExists || !project ? (
             <Logs
               logs={logs}
               project={projectExists ? project : null}
