@@ -1,38 +1,73 @@
 // A minimal LSP client connecting Monaco to gopls over a WebSocket (one
 // JSON-RPC message per frame). It covers what the editor needs: document
-// sync, completion (incl. auto-imports), hover, signature help, diagnostics
-// and formatting.
+// sync, completion (incl. auto-imports), hover, signature help, go to
+// definition, diagnostics and formatting. A lost connection (network change, phone asleep, gopls
+// crash) is re-established with a fresh gopls and the open files.
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void }
 type Position = { line: number; character: number }
 type LspRange = { start: Position; end: Position }
 
-const REQUEST_TIMEOUT = 10_000
+// gopls loads the workspace before its first answer; that takes a while on
+// small hardware.
+const REQUEST_TIMEOUT = 30_000
+
+export type LSPState = 'connecting' | 'ready' | 'down'
 
 export class LSPClient {
-  private ws: WebSocket
+  private ws!: WebSocket
   private nextId = 1
   private pending = new Map<number, Pending>()
   private versions = new Map<string, number>()
-  private ready: Promise<void>
-  private closed = false
+  private ready!: Promise<void>
+  private stopped = false // close() was called
   private initialized = false // models created before this are opened by initialize
+  private retries = 0
+  private retryTimer = 0
 
   // rootUri: file:// URI of the project directory.
-  constructor(url: string, readonly rootUri: string) {
-    this.ws = new WebSocket(url)
+  constructor(private url: string, readonly rootUri: string, private onState: (s: LSPState) => void) {
+    this.connect()
+    document.addEventListener('visibilitychange', this.onVisible)
+  }
+
+  private get open() {
+    return this.ws.readyState === WebSocket.OPEN
+  }
+
+  private connect() {
+    clearTimeout(this.retryTimer)
+    this.retryTimer = 0
+    this.initialized = false
+    this.versions.clear()
+    this.onState('connecting')
+    const ws = new WebSocket(this.url)
+    this.ws = ws
     this.ready = new Promise((resolve, reject) => {
-      this.ws.onopen = () => this.initialize().then(resolve, reject)
-      this.ws.onerror = () => reject(new Error('LSP connection failed'))
+      ws.onopen = () =>
+        this.initialize().then(() => {
+          this.retries = 0
+          this.onState('ready')
+          resolve()
+        }, reject)
+      ws.onclose = () => {
+        reject(new Error('LSP connection closed'))
+        for (const p of this.pending.values()) p.reject(new Error('LSP connection closed'))
+        this.pending.clear()
+        for (const m of monaco.editor.getModels()) if (this.owns(m)) monaco.editor.setModelMarkers(m, 'gopls', [])
+        if (this.stopped) return
+        this.onState('down')
+        this.retryTimer = window.setTimeout(() => this.connect(), Math.min(1000 * 2 ** this.retries++, 10_000))
+      }
     })
-    this.ws.onmessage = (e) => this.onMessage(JSON.parse(e.data))
-    this.ws.onclose = () => {
-      this.closed = true
-      for (const p of this.pending.values()) p.reject(new Error('LSP connection closed'))
-      this.pending.clear()
-      for (const m of monaco.editor.getModels()) if (this.owns(m)) monaco.editor.setModelMarkers(m, 'gopls', [])
-    }
+    this.ready.catch(() => {}) // callers handle it; nobody may be waiting
+    ws.onmessage = (e) => this.onMessage(JSON.parse(e.data))
+  }
+
+  // Back in the foreground (phone unlocked, tab selected): don't wait for the timer.
+  private onVisible = () => {
+    if (document.visibilityState === 'visible' && this.retryTimer && !this.stopped) this.connect()
   }
 
   owns(model: monaco.editor.ITextModel) {
@@ -40,12 +75,15 @@ export class LSPClient {
   }
 
   close() {
+    this.stopped = true
+    clearTimeout(this.retryTimer)
+    document.removeEventListener('visibilitychange', this.onVisible)
     this.ws.close()
   }
 
   async request<T = any>(method: string, params: unknown): Promise<T> {
     await this.ready
-    if (this.closed) throw new Error('LSP connection closed')
+    if (!this.open) throw new Error('LSP connection closed')
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -61,7 +99,10 @@ export class LSPClient {
   }
 
   notify(method: string, params: unknown) {
-    this.ready.then(() => !this.closed && this.send({ method, params }))
+    this.ready.then(
+      () => this.open && this.send({ method, params }),
+      () => {},
+    )
   }
 
   private send(msg: object) {
@@ -88,6 +129,7 @@ export class LSPClient {
                 completionItem: { snippetSupport: true, documentationFormat: ['markdown', 'plaintext'] },
               },
               hover: { contentFormat: ['markdown', 'plaintext'] },
+              definition: { linkSupport: false },
               signatureHelp: {
                 signatureInformation: {
                   documentationFormat: ['markdown', 'plaintext'],
@@ -134,7 +176,7 @@ export class LSPClient {
 
   // Full-document sync: simple and cheap for automation-sized files.
   didOpen(model: monaco.editor.ITextModel) {
-    if (!this.initialized || this.closed) return
+    if (!this.initialized || !this.open) return
     const uri = model.uri.toString()
     this.versions.set(uri, model.getVersionId())
     this.send({
@@ -152,6 +194,13 @@ export class LSPClient {
     })
   }
 
+  // Without this, gopls keeps a deleted file's declarations forever.
+  didClose(model: monaco.editor.ITextModel) {
+    const uri = model.uri.toString()
+    if (!this.versions.delete(uri)) return
+    this.notify('textDocument/didClose', { textDocument: { uri } })
+  }
+
   didSave(model: monaco.editor.ITextModel) {
     this.notify('textDocument/didSave', { textDocument: { uri: model.uri.toString() } })
   }
@@ -161,10 +210,10 @@ export class LSPClient {
 
 let active: LSPClient | null = null
 
-export function connectLSP(projectName: string, projectDir: string): LSPClient {
+export function connectLSP(projectName: string, projectDir: string, onState: (s: LSPState) => void): LSPClient {
   const url = new URL(`./api/projects/${encodeURIComponent(projectName)}/lsp`, location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  const client = new LSPClient(url.toString(), monaco.Uri.file(projectDir).toString())
+  const client = new LSPClient(url.toString(), monaco.Uri.file(projectDir).toString(), onState)
   active = client
   return client
 }
@@ -220,6 +269,13 @@ const kinds = [
   'Constant', 'Struct', 'Event', 'Operator', 'TypeParameter',
 ] as const
 
+// Go to definition ends here: the app opens the file (which may be outside
+// the project: SDK, generated entities, Go itself) at the position.
+let openLocation: (uri: monaco.Uri, line: number, column: number) => void = () => {}
+export function onOpenLocation(fn: typeof openLocation) {
+  openLocation = fn
+}
+
 let registered = false
 
 export function registerProviders() {
@@ -230,16 +286,16 @@ export function registerProviders() {
     clientFor(model)?.didOpen(model)
     model.onDidChangeContent(() => clientFor(model)?.didChange(model))
   })
+  monaco.editor.onWillDisposeModel((model) => clientFor(model)?.didClose(model))
 
   monaco.languages.registerCompletionItemProvider('go', {
     triggerCharacters: ['.'],
     async provideCompletionItems(model, position) {
       const c = clientFor(model)
       if (!c) return { suggestions: [] }
-      const res = await c.request('textDocument/completion', {
-        textDocument: { uri: model.uri.toString() },
-        position: toPos(position),
-      })
+      const res = await c
+        .request('textDocument/completion', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+        .catch(() => null)
       const items: any[] = Array.isArray(res) ? res : (res?.items ?? [])
       const word = model.getWordUntilPosition(position)
       const fallback = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn)
@@ -268,10 +324,33 @@ export function registerProviders() {
     async provideHover(model, position) {
       const c = clientFor(model)
       if (!c) return null
-      const res = await c.request('textDocument/hover', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+      const res = await c
+        .request('textDocument/hover', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+        .catch(() => null)
       if (!res) return null
       const contents = (Array.isArray(res.contents) ? res.contents : [res.contents]).map(markdown).filter(Boolean)
       return { contents, range: res.range ? toRange(res.range) : undefined }
+    },
+  })
+
+  monaco.languages.registerDefinitionProvider('go', {
+    async provideDefinition(model, position) {
+      const c = clientFor(model)
+      if (!c) return null
+      const res = await c
+        .request('textDocument/definition', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+        .catch(() => null)
+      const locations: any[] = !res ? [] : Array.isArray(res) ? res : [res]
+      return locations.map((l) => ({ uri: monaco.Uri.parse(l.uri), range: toRange(l.range) }))
+    },
+  })
+  // Monaco itself can only jump within the open file.
+  monaco.editor.registerEditorOpener({
+    openCodeEditor(_source, resource, at) {
+      if (!at) openLocation(resource, 1, 1)
+      else if ('startLineNumber' in at) openLocation(resource, at.startLineNumber, at.startColumn)
+      else openLocation(resource, at.lineNumber, at.column)
+      return true
     },
   })
 
@@ -280,7 +359,9 @@ export function registerProviders() {
     async provideSignatureHelp(model, position) {
       const c = clientFor(model)
       if (!c) return null
-      const res = await c.request('textDocument/signatureHelp', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+      const res = await c
+        .request('textDocument/signatureHelp', { textDocument: { uri: model.uri.toString() }, position: toPos(position) })
+        .catch(() => null)
       if (!res?.signatures?.length) return null
       return {
         value: {

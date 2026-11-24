@@ -36,7 +36,11 @@ export class DAPClient {
   }
 
   // start attaches and installs breakpoints (absolute path -> lines).
-  async start(breakpoints: Record<string, number[]>) {
+  // Delve resumes the program when a client has attached, even if it was
+  // paused. keepPaused (stopOnEntry) prevents that; Delve then reports
+  // "stopped" with reason "entry". It would also pause a running program, so
+  // it is only for attaching again to a program this client had paused.
+  async start(breakpoints: Record<string, number[]>, keepPaused: boolean) {
     await this.open
     await this.request('initialize', {
       clientID: 'gohomeassistant',
@@ -47,7 +51,7 @@ export class DAPClient {
       supportsVariableType: true,
     })
     const initialized = this.waitEvent('initialized')
-    const attached = this.request('attach', { mode: 'remote' })
+    const attached = this.request('attach', { mode: 'remote', stopOnEntry: keepPaused })
     await initialized
     for (const [path, lines] of Object.entries(breakpoints)) await this.setBreakpoints(path, lines)
     await this.request('configurationDone', {})

@@ -33,7 +33,8 @@ func TestLSPCompletionThroughWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(New(mgr, logbus.New(10), "1.24", log).Handler())
+	bus := logbus.New(10)
+	srv := httptest.NewServer(New(mgr, bus, "1.24", log).Handler())
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -101,6 +102,21 @@ func TestLSPCompletionThroughWorkspace(t *testing.T) {
 		}
 		send(map[string]any{"id": 3, "method": "workspace/symbol", "params": map[string]any{"query": "x"}}) // keep reading
 		next(3)
+	}
+
+	// A file written outside the editor (git, another editor) defines the
+	// function: gopls must hear about it and drop the error.
+	diagnostics = nil
+	os.WriteFile(filepath.Join(dir, "other.go"), []byte("package main\n\nfunc undefinedThing() {}\n"), 0o644)
+	bus.PublishFiles("demo")
+	deadline = time.Now().Add(30 * time.Second)
+	for len(diagnostics) == 0 || strings.Contains(diagnostics[len(diagnostics)-1], "undefinedThing") {
+		if time.Now().After(deadline) {
+			t.Fatalf("gopls didn't notice other.go: %v", diagnostics)
+		}
+		send(map[string]any{"id": 4, "method": "workspace/symbol", "params": map[string]any{"query": "x"}})
+		next(4)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

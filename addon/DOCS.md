@@ -31,7 +31,10 @@ git repository (see the *Changes* section and the *History* tab).
 - Code completion, hover docs, auto-imports and gofmt on save (gopls).
 - **Entities** panel: search, live state, insert as code.
 - **Debug** tab: breakpoints, stepping, variables (Delve).
-- **Logs** tab: output of all projects.
+- **Logs** tab: output of all projects, kept on disk. Filter by level, search,
+  load older entries; a line marks what is new since your last visit.
+- **Traces** tab: every handler run with its trigger, log lines, service
+  calls and errors.
 
 ## Notes
 

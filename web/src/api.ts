@@ -21,9 +21,34 @@ export type LogEntry = {
   level: string
   project?: string
   output?: boolean
-  msg: string
+  msg?: string
   attrs?: Record<string, string>
+  trace?: Trace // set instead of msg: one handler run
 }
+
+// An execution trace, as reported by the SDK (sdk/trace.go).
+export type TraceStep = {
+  at_us: number // since the start of the trace
+  kind: 'call' | 'log' | 'panic'
+  msg: string
+  data?: unknown
+  src?: string // "main.go:12"
+  dur_us?: number
+  err?: string
+}
+export type Trace = {
+  trigger: 'state' | 'event' | 'go' | 'call'
+  name?: string
+  from?: string
+  to?: string
+  src?: string
+  start: string
+  dur_us: number
+  steps?: TraceStep[]
+  failed?: boolean
+}
+
+export type LogQuery = { before?: number; project?: string; level?: string; q?: string; traces?: boolean }
 
 export type FileInfo = { path: string; size: number }
 
@@ -85,6 +110,18 @@ export const api = {
   },
   snippets: async (): Promise<Snippet[]> => (await req('GET', './api/snippets')).json(),
   saveSnippets: (list: Snippet[]) => req('PUT', './api/snippets', JSON.stringify(list)),
+  // source reads a Go file outside the projects (SDK, entities, Go, modules).
+  source: async (path: string) => (await req('GET', `./api/source?${new URLSearchParams({ path })}`)).text(),
+  // logs returns up to 500 older entries from disk, oldest first.
+  logs: async (f: LogQuery): Promise<LogEntry[]> => {
+    const q = new URLSearchParams()
+    if (f.before) q.set('before', String(f.before))
+    if (f.project !== undefined) q.set('project', f.project)
+    if (f.level) q.set('level', f.level)
+    if (f.q) q.set('q', f.q)
+    if (f.traces) q.set('traces', '1')
+    return (await req('GET', `./api/logs?${q}`)).json()
+  },
   me: async (): Promise<Me> => (await req('GET', './api/me')).json(),
   logout: () => req('POST', './auth/logout'),
 }
@@ -94,6 +131,7 @@ export const api = {
 export function subscribe(handlers: {
   onReset: () => void
   onLog: (e: LogEntry) => void
+  onTrace: (e: LogEntry) => void
   onStatus: (s: Status) => void
   onFiles: (project: string) => void
   onConnection: (connected: boolean) => void
@@ -107,6 +145,7 @@ export function subscribe(handlers: {
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data)
     if (ev.type === 'log') handlers.onLog(ev.log)
+    else if (ev.type === 'trace') handlers.onTrace(ev.log)
     else if (ev.type === 'status') handlers.onStatus(ev.status)
     else if (ev.type === 'files') handlers.onFiles(ev.project)
   }

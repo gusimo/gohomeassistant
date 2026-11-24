@@ -113,6 +113,31 @@ export function Editor(props: Props) {
   )
 }
 
+// SourceView shows a file from outside the project (read-only) at a line:
+// where go to definition leads for the SDK, the entities or Go itself.
+export function SourceView({ path, text, line, dark }: { path: string; text: string; line: number; dark: boolean }) {
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null)
+  useEffect(() => {
+    if (!editor) return
+    // After the editor switched to this file's model.
+    const t = setTimeout(() => {
+      editor.revealLineInCenter(line)
+      editor.setPosition({ lineNumber: line, column: 1 })
+    }, 50)
+    return () => clearTimeout(t)
+  }, [editor, path, line, text])
+  return (
+    <MonacoEditor
+      path={monaco.Uri.file(path).toString()}
+      value={text}
+      language="go"
+      theme={dark ? 'vs-dark' : 'vs'}
+      onMount={setEditor}
+      options={{ readOnly: true, fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, tabSize: 4 }}
+    />
+  )
+}
+
 // DiffView shows two versions of a file side by side (read-only).
 export function DiffView({ path, original, modified, dark }: { path: string; original: string; modified: string; dark: boolean }) {
   return (

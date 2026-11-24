@@ -16,6 +16,10 @@
 //
 // Handlers run one at a time on a single goroutine, so project code does not
 // need locking. A panicking handler is logged and does not stop the project.
+//
+// Every handler run is reported to the host as an execution trace: what
+// triggered it, what it logged (package log), which services it called and
+// what they returned. The UI shows them in the Traces tab.
 package ha
 
 import (
@@ -27,8 +31,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -75,11 +79,18 @@ type Client struct {
 	pending map[int]chan message
 	events  map[int]func(json.RawMessage) // subscription id -> handler (called on dispatch goroutine)
 	states  map[string]*State
-	stateFn map[string][]func(StateChange) // entity id ("" = all) -> handlers
+	stateFn map[string][]stateHandler // entity id ("" = all) -> handlers
 
-	dispatch chan func()
-	closed   chan struct{}
-	err      error
+	queue  queue         // handler runs, executed one at a time by dispatchLoop
+	gid    atomic.Uint64 // goroutine id of dispatchLoop
+	cur    *trace        // trace of the running handler; only used on that goroutine
+	closed chan struct{}
+	err    error
+}
+
+type stateHandler struct {
+	fn  func(StateChange)
+	src string // where it was registered, "main.go:12"
 }
 
 type message struct {
@@ -115,15 +126,18 @@ func Connect() (*Client, error) {
 		return nil, fmt.Errorf("connect to host: %w", err)
 	}
 	c := &Client{
-		conn:     conn,
-		enc:      json.NewEncoder(conn),
-		pending:  map[int]chan message{},
-		events:   map[int]func(json.RawMessage){},
-		states:   map[string]*State{},
-		stateFn:  map[string][]func(StateChange){},
-		dispatch: make(chan func(), 1024),
-		closed:   make(chan struct{}),
+		conn:    conn,
+		enc:     json.NewEncoder(conn),
+		pending: map[int]chan message{},
+		events:  map[int]func(json.RawMessage){},
+		states:  map[string]*State{},
+		stateFn: map[string][]stateHandler{},
+		closed:  make(chan struct{}),
 	}
+	c.queue.cond = sync.NewCond(&c.queue.mu)
+	// The host timestamps every line, and traces record what handlers log.
+	log.SetFlags(0)
+	log.SetOutput(logTee{c})
 	go c.readLoop()
 	go c.dispatchLoop()
 
@@ -174,8 +188,12 @@ func (c *Client) States() []*State {
 // OnStateChange calls fn whenever the given entity changes. An empty entityID
 // matches all entities.
 func (c *Client) OnStateChange(entityID string, fn func(StateChange)) {
+	c.onStateChange(entityID, fn, caller(1))
+}
+
+func (c *Client) onStateChange(entityID string, fn func(StateChange), src string) {
 	c.mu.Lock()
-	c.stateFn[entityID] = append(c.stateFn[entityID], fn)
+	c.stateFn[entityID] = append(c.stateFn[entityID], stateHandler{fn, src})
 	c.mu.Unlock()
 }
 
@@ -185,13 +203,15 @@ func (c *Client) OnEvent(eventType string, fn func(Event)) error {
 	if eventType != "" {
 		msg["event_type"] = eventType
 	}
+	src := caller(1)
 	return c.subscribe(msg, func(raw json.RawMessage) {
 		var ev Event
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			log.Printf("gohomeassistant: decode event: %v", err)
 			return
 		}
-		fn(ev)
+		// "All events" handlers run far too often to report each run.
+		c.invoke(&trace{Trigger: "event", Name: ev.EventType, Src: src, always: eventType != ""}, func() { fn(ev) })
 	})
 }
 
@@ -238,16 +258,25 @@ func (c *Client) Run() {
 //
 //	time.AfterFunc(5*time.Minute, func() { c.Go(func() { ... }) })
 func (c *Client) Go(fn func()) {
-	c.dispatch <- fn
+	src := caller(1)
+	c.queue.push(func() { c.invoke(&trace{Trigger: "go", Src: src}, fn) })
 }
 
 func (c *Client) call(msg map[string]any) (json.RawMessage, error) {
 	return c.send(msg, nil)
 }
 
-// send sends msg and waits for its result. If handler is set, it is
-// registered for events with the message id before sending.
+// send is roundTrip, recorded in the trace of the running handler.
 func (c *Client) send(msg map[string]any, handler func(json.RawMessage)) (json.RawMessage, error) {
+	done := c.traceCall(msg)
+	res, err := c.roundTrip(msg, handler)
+	done(err)
+	return res, err
+}
+
+// roundTrip sends msg and waits for its result. If handler is set, it is
+// registered for events with the message id before sending.
+func (c *Client) roundTrip(msg map[string]any, handler func(json.RawMessage)) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -317,21 +346,85 @@ func (c *Client) readLoop() {
 			ch <- m // buffered, one result per id
 		case m.Type == "event" && h != nil:
 			raw := m.Event
-			c.dispatch <- func() { h(raw) }
+			c.queue.push(func() { h(raw) })
+		case m.Type == "gha/reconnected":
+			c.queue.push(c.resync)
 		}
 	}
 }
 
+// queue is an unbounded FIFO. The read loop must never wait for a handler:
+// a handler that calls a service waits for the read loop to deliver the result.
+type queue struct {
+	mu    sync.Mutex
+	cond  *sync.Cond
+	items []func()
+}
+
+// maxQueue is how far handlers may fall behind before the project gives up
+// (and is restarted by the host) instead of eating memory.
+const maxQueue = 100_000
+
+func (q *queue) push(fn func()) {
+	q.mu.Lock()
+	n := len(q.items)
+	q.items = append(q.items, fn)
+	q.mu.Unlock()
+	q.cond.Signal()
+	if n >= maxQueue {
+		log.Fatalf("gohomeassistant: %d events are waiting for a handler that doesn't return; giving up", n)
+	}
+}
+
+func (q *queue) pop() func() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.items) == 0 {
+		q.cond.Wait()
+	}
+	fn := q.items[0]
+	q.items[0] = nil
+	q.items = q.items[1:]
+	return fn
+}
+
 func (c *Client) dispatchLoop() {
-	for fn := range c.dispatch {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("gohomeassistant: handler panic: %v\n%s", r, debug.Stack())
-				}
-			}()
-			fn()
-		}()
+	c.gid.Store(goid())
+	for {
+		c.queue.pop()()
+	}
+}
+
+// resync reloads all states after the host lost and regained its connection
+// to Home Assistant (e.g. HA was restarted). Changes that happened meanwhile
+// are delivered to the handlers, so no automation keeps acting on old states.
+func (c *Client) resync() {
+	res, err := c.call(map[string]any{"type": "get_states"})
+	var states []*State
+	if err == nil {
+		err = json.Unmarshal(res, &states)
+	}
+	if err != nil {
+		log.Printf("gohomeassistant: reload states after reconnect: %v", err)
+		return
+	}
+	fresh := make(map[string]*State, len(states))
+	for _, s := range states {
+		fresh[s.EntityID] = s
+	}
+	c.mu.Lock()
+	old := c.states
+	c.states = fresh
+	c.mu.Unlock()
+	for id, n := range fresh {
+		if o := old[id]; o == nil || o.State != n.State || !o.LastUpdated.Equal(n.LastUpdated) {
+			c.fire(StateChange{EntityID: id, Old: o, New: n})
+		}
+	}
+	for id, o := range old {
+		if fresh[id] == nil {
+			c.fire(StateChange{EntityID: id, Old: o})
+		}
 	}
 }
 
@@ -354,11 +447,25 @@ func (c *Client) handleStateChanged(raw json.RawMessage) {
 	} else {
 		c.states[d.EntityID] = d.NewState
 	}
-	handlers := append(append([]func(StateChange){}, c.stateFn[d.EntityID]...), c.stateFn[""]...)
 	c.mu.Unlock()
+	c.fire(StateChange{EntityID: d.EntityID, Old: d.OldState, New: d.NewState})
+}
 
-	ch := StateChange{EntityID: d.EntityID, Old: d.OldState, New: d.NewState}
-	for _, h := range handlers {
-		h(ch)
+// fire runs the handlers of a state change, each with its own trace.
+func (c *Client) fire(ch StateChange) {
+	c.mu.Lock()
+	specific := len(c.stateFn[ch.EntityID])
+	handlers := append(append([]stateHandler{}, c.stateFn[ch.EntityID]...), c.stateFn[""]...)
+	c.mu.Unlock()
+	for i, h := range handlers {
+		// "All entities" handlers run far too often to report each run.
+		t := &trace{Trigger: "state", Name: ch.EntityID, Src: h.src, always: i < specific && ch.EntityID != ""}
+		if ch.Old != nil {
+			t.From = &ch.Old.State
+		}
+		if ch.New != nil {
+			t.To = &ch.New.State
+		}
+		c.invoke(t, func() { h.fn(ch) })
 	}
 }

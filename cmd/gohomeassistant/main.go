@@ -6,7 +6,7 @@
 //	HA_URL            e.g. http://homeassistant.local:8123 (standalone)
 //	HA_TOKEN          long-lived access token (standalone)
 //	GHA_PROJECTS_DIR  default /data/projects
-//	GHA_DATA_DIR      default /data/gohomeassistant (build outputs)
+//	GHA_DATA_DIR      default /data/gohomeassistant (build outputs, logs)
 //	GHA_SDK_DIR       default /opt/gohomeassistant/sdk
 //	GHA_HTTP_ADDR     default :8099 (web UI)
 //	GHA_AUTH          standalone: "ha" (default, log in with HA, admins only)
@@ -40,7 +40,13 @@ import (
 )
 
 func main() {
-	bus := logbus.New(5000)
+	// Logs and traces are kept on disk: what happened while nobody watched
+	// can still be read later, also after a restart.
+	bus, err := logbus.Open(filepath.Join(env("GHA_DATA_DIR", "/data/gohomeassistant"), "logs"), 5000)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gohomeassistant: logs are kept in memory only: %v\n", err)
+		bus = logbus.New(5000)
+	}
 	log := slog.New(logbus.NewHandler(slog.NewTextHandler(os.Stderr, nil), bus))
 	if err := run(log, bus); err != nil {
 		log.Error("fatal", "err", err)
@@ -76,9 +82,11 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	defer stop()
 
 	client := ha.New(wsURL, token, log)
+	br := bridge.New(client, log)
+	br.OnTrace = bus.PublishTrace
+	client.OnReconnect = br.Reconnected
 	go client.Run(ctx)
 
-	br := bridge.New(client, log)
 	go func() {
 		if err := br.Serve(ctx, socket); err != nil {
 			log.Error("bridge", "err", err)
@@ -108,7 +116,10 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	if err != nil {
 		return err
 	}
-	gen.OnChange = mgr.TriggerAll
+	gen.OnChange = func() {
+		mgr.TriggerAll()
+		bus.PublishEntities() // completion (gopls) and the entity browser reload them
+	}
 	go gen.Run(ctx)
 
 	authn, err := authConfig(log)
@@ -122,7 +133,7 @@ func run(log *slog.Logger, bus *logbus.Bus) error {
 	web := server.New(mgr, bus, goVersion, log)
 	web.Auth = authn
 	web.SkipOriginCheck = authn.Mode == auth.Ingress
-	web.HA, web.Refs = client, gen.Refs
+	web.HA, web.Refs, web.EntDir, web.SDKDir = client, gen.Refs, gen.Dir, sdkDir
 	web.SnippetsFile = filepath.Join(dataDir, "snippets.json")
 	addr := env("GHA_HTTP_ADDR", ":8099")
 	srv := &http.Server{Addr: addr, Handler: web.Handler()}

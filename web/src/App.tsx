@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, parseBuildError, subscribe, type Commit, type FileInfo, type GitFile, type GitStatus, type LogEntry, type Me, type Status } from './api'
-import { DiffView, Editor } from './Editor'
+import { DiffView, Editor, SourceView } from './Editor'
 import { History, SourceControl, statusLetter } from './Git'
 import { Entities } from './Entities'
 import { Snippets } from './Snippets'
@@ -9,10 +9,33 @@ import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { RebuildIcon, TrashIcon } from './Icons'
 import { DebugPanel, useDebugger, type Breakpoints } from './Debug'
 import { Logs } from './Logs'
-import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, registerProviders } from './lsp'
+import { Traces } from './Traces'
+import { connectLSP, disconnectLSP, fileURI, formatModel, notifySaved, onOpenLocation, registerProviders, type LSPState } from './lsp'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 
 const MAX_LOGS = 5000
+const MAX_TRACES = 500
+
+type Tab = 'logs' | 'traces' | 'debug' | 'history'
+
+// useUnseen counts the entries matching pred that arrived while their tab
+// wasn't on screen, also across visits (the position is kept in the browser).
+// since is where the previous visit ended.
+function useUnseen(name: string, entries: LogEntry[], visible: boolean, pred: (e: LogEntry) => boolean) {
+  const [seen, setSeen] = useState(() => Number(stored(`gha.seen.${name}`) ?? 0))
+  const since = useRef(seen)
+  const last = entries.length ? entries[entries.length - 1].seq : 0
+  useEffect(() => {
+    if (visible && last > 0 && last !== seen) {
+      setSeen(last)
+      store(`gha.seen.${name}`, String(last))
+    }
+  }, [name, visible, last, seen])
+  const count = useMemo(() => (visible ? 0 : entries.filter((e) => e.seq > seen && pred(e)).length), [entries, visible, seen, pred])
+  return { count, since: since.current }
+}
+const isProblem = (e: LogEntry) => e.level === 'ERROR' || e.level === 'WARN'
+const isFailed = (e: LogEntry) => e.level === 'ERROR'
 
 function useMedia(query: string) {
   const q = useMemo(() => window.matchMedia(query), [query])
@@ -54,6 +77,8 @@ export function App() {
   const [pane, setPane] = useState<'code' | 'panel'>('code') // mobile: editor or bottom panel
   const [statuses, setStatuses] = useState<Record<string, Status>>({})
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [traces, setTraces] = useState<LogEntry[]>([])
+  const [lsp, setLsp] = useState<LSPState>('ready')
   const [connected, setConnected] = useState(false)
   const [project, setProject] = useState<string | null>(stored('gha.project'))
   const [files, setFiles] = useState<FileInfo[]>([])
@@ -66,9 +91,11 @@ export function App() {
   )
   const [ownSnippets, setOwnSnippetsState] = useState<Snippet[]>([])
   const [me, setMe] = useState<Me | null>(null)
-  const [bottomTab, setBottomTab] = useState<'logs' | 'debug' | 'history'>('logs')
+  const [bottomTab, setBottomTab] = useState<Tab>('logs')
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [diff, setDiff] = useState<Diff | null>(null)
+  // A file outside the project, shown read-only (go to definition).
+  const [external, setExternal] = useState<{ path: string; text: string; line: number } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [autoSave, setAutoSave] = useState(stored('gha.autosave') !== '0') // on by default
   const autoSaveTimers = useRef<Record<string, number>>({})
@@ -110,27 +137,36 @@ export function App() {
     ed.focus()
   }
 
-  // Live logs and status. Log lines are batched per animation frame.
+  // Live logs, traces and status. Entries are batched per animation frame.
   useEffect(() => {
     let buf: LogEntry[] = []
+    let traceBuf: LogEntry[] = []
     let frame = 0
+    const append = (max: number, add: LogEntry[]) => (l: LogEntry[]) => {
+      const next = l.concat(add)
+      return next.length > max ? next.slice(next.length - max) : next
+    }
     const flush = () => {
       frame = 0
-      const add = buf
+      if (buf.length) setLogs(append(MAX_LOGS, buf))
+      if (traceBuf.length) setTraces(append(MAX_TRACES, traceBuf))
       buf = []
-      setLogs((l) => {
-        const next = l.concat(add)
-        return next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next
-      })
+      traceBuf = []
     }
     return subscribe({
       onReset: () => {
         buf = []
+        traceBuf = []
         setLogs([])
+        setTraces([])
         setStatuses({})
       },
       onLog: (e) => {
         buf.push(e)
+        if (!frame) frame = requestAnimationFrame(flush)
+      },
+      onTrace: (e) => {
+        traceBuf.push(e)
         if (!frame) frame = requestAnimationFrame(flush)
       },
       onStatus: (s) =>
@@ -161,6 +197,7 @@ export function App() {
     const k = key(p, path)
     try {
       if (!(k in saved.current)) saved.current[k] = await api.readFile(p, path)
+      setExternal(null)
       setOpen({ project: p, path, initial: saved.current[k] })
       store(`gha.file.${p}`, path)
     } catch (e) {
@@ -208,7 +245,7 @@ export function App() {
   useEffect(() => {
     if (!project || !projectDir) return
     registerProviders()
-    const client = connectLSP(project, projectDir)
+    const client = connectLSP(project, projectDir, setLsp)
     return () => disconnectLSP(client)
   }, [project, projectDir])
   useEffect(() => {
@@ -228,6 +265,7 @@ export function App() {
   useEffect(() => {
     setGitStatus(null)
     setDiff(null)
+    setExternal(null)
     if (project && projectExists) refreshGit(project)
   }, [project, projectExists, refreshGit])
 
@@ -251,6 +289,7 @@ export function App() {
           text = await api.readFile(p, path)
         } catch {
           delete saved.current[k] // deleted on disk
+          closeModel(p, path)
           setOpen((o) => (o && o.project === p && o.path === path ? null : o))
           continue
         }
@@ -271,6 +310,7 @@ export function App() {
     if (!project) return
     try {
       const head = await api.git.show(project, 'HEAD', path)
+      setExternal(null)
       const st = gitStatus?.files?.find((f) => f.path === path)?.status
       const modified = st === 'deleted' ? '' : await api.readFile(project, path)
       setDiff({
@@ -290,6 +330,7 @@ export function App() {
     try {
       const before = st === 'added' ? { text: '' } : await api.git.show(project, `${c.hash}^`, path)
       const after = st === 'deleted' ? { text: '' } : await api.git.show(project, c.hash, path)
+      setExternal(null)
       setDiff({
         path,
         title: `${path} in ${c.short}: ${c.message}`,
@@ -327,6 +368,53 @@ export function App() {
       openFile(project, frameFile)
     }
   }, [project, frameFile, openFile])
+
+  // closeModel drops the editor's copy of a deleted file (and tells gopls).
+  const closeModel = (p: string, path: string) => {
+    const dir = statuses[p]?.dir
+    if (dir) monaco.editor.getModel(monaco.Uri.parse(fileURI(dir, path)))?.dispose()
+  }
+
+  // Jump to a line of a file, e.g. from a trace.
+  const reveal = useRef<{ path: string; line: number; column: number } | null>(null)
+  const openAt = (path: string, line: number, column = 1) => {
+    if (!project) return
+    reveal.current = { path, line, column }
+    setDiff(null)
+    setPane('code')
+    openFile(project, path)
+  }
+  useEffect(() => {
+    const r = reveal.current
+    if (!r || open?.path !== r.path) return
+    reveal.current = null
+    // After the editor switched to the file's model.
+    const t = setTimeout(() => {
+      editorRef.current?.revealLineInCenter(r.line)
+      editorRef.current?.setPosition({ lineNumber: r.line, column: r.column })
+      editorRef.current?.focus()
+    }, 50)
+    return () => clearTimeout(t)
+  }, [open])
+
+  // Go to definition (F12, ⌘/Ctrl+click, context menu): a file of the
+  // project opens in the editor, anything else read-only.
+  const openLocation = useRef<Parameters<typeof onOpenLocation>[0]>(() => {})
+  openLocation.current = (uri, line, column) => {
+    if (projectDir && uri.path.startsWith(projectDir + '/')) {
+      openAt(uri.path.slice(projectDir.length + 1), line, column)
+      return
+    }
+    api.source(uri.path).then(
+      (text) => {
+        setDiff(null)
+        setPane('code')
+        setExternal({ path: uri.path, text, line })
+      },
+      (e) => setError(String(e)),
+    )
+  }
+  useEffect(() => onOpenLocation((...args) => openLocation.current(...args)), [])
 
   // writeFile saves the current content of a file (project/path key) and
   // marks it clean if nothing changed meanwhile.
@@ -428,6 +516,8 @@ export function App() {
     try {
       await api.deleteFile(project, path)
       delete saved.current[key(project, path)]
+      delete current.current[key(project, path)]
+      closeModel(project, path)
       if (open?.path === path) setOpen(null)
       await refreshFiles(project)
     } catch (e) {
@@ -450,7 +540,9 @@ export function App() {
 
   // While debugging, a phone shows the code above the debug panel.
   const paneClass = pane === 'panel' && bottomTab === 'debug' && status?.debug ? 'split' : pane
-  type Tab = 'logs' | 'debug' | 'history'
+  const tabShown = (t: Tab) => bottomTab === t && (!mobile || pane === 'panel')
+  const unseenLogs = useUnseen('logs', logs, tabShown('logs') || !projectExists, isProblem)
+  const unseenTraces = useUnseen('traces', traces, tabShown('traces'), isFailed)
   const tabClass = (t: Tab) => (bottomTab === t && (!mobile || pane === 'panel') ? 'gha-tab gha-active' : 'gha-tab')
   const showTab = (t: Tab) => {
     setBottomTab(t)
@@ -539,6 +631,11 @@ export function App() {
                 {open && open.project === project && <> / {open.path}</>}
               </span>
               {status && <span className={`gha-status ${dotClass(status)}`}>{statusText(status)}</span>}
+              {lsp !== 'ready' && (
+                <span className="gha-status gha-building" title="Code completion, hover and live errors come from gopls">
+                  {lsp === 'connecting' ? 'Completion starting…' : 'Completion offline, reconnecting…'}
+                </span>
+              )}
               <span className="gha-spacer" />
               <div className="gha-actions">
               <button className={`gha-ghost${side === 'entities' ? ' gha-toggled' : ''}`} onClick={() => toggleSide('entities')}>
@@ -583,7 +680,19 @@ export function App() {
 
         <div className="gha-editor-row">
         <div className="gha-editor">
-          {projectExists && diff ? (
+          {projectExists && external ? (
+            <div className="gha-diff">
+              <div className="gha-diff-header">
+                <span className="gha-crumb" title={external.path}>{external.path.split('/').slice(-3).join('/')}</span>
+                <span className="gha-muted">read-only</span>
+                <span className="gha-spacer" />
+                <button className="gha-small gha-ghost" onClick={() => setExternal(null)}>Close</button>
+              </div>
+              <div className="gha-diff-body">
+                <SourceView path={external.path} text={external.text} line={external.line} dark={dark} />
+              </div>
+            </div>
+          ) : projectExists && diff ? (
             <div className="gha-diff">
               <div className="gha-diff-header">
                 <span className="gha-crumb">{diff.title}</span>
@@ -656,6 +765,11 @@ export function App() {
             )}
             <button className={tabClass('logs')} onClick={() => showTab('logs')}>
               Logs
+              {unseenLogs.count > 0 && <span className="gha-count" title="Warnings and errors you haven't seen">{unseenLogs.count}</span>}
+            </button>
+            <button className={tabClass('traces')} onClick={() => showTab('traces')}>
+              Traces
+              {unseenTraces.count > 0 && <span className="gha-count" title="Failed runs you haven't seen">{unseenTraces.count}</span>}
             </button>
             <button className={tabClass('debug')} onClick={() => showTab('debug')}>
               Debug
@@ -677,6 +791,18 @@ export function App() {
                 store('gha.onlyProject', v ? '1' : '0')
               }}
               onClear={() => setLogs([])}
+              lastVisit={unseenLogs.since}
+            />
+          ) : bottomTab === 'traces' ? (
+            <Traces
+              traces={traces}
+              project={project}
+              onlyProject={onlyProject}
+              setOnlyProject={(v) => {
+                setOnlyProject(v)
+                store('gha.onlyProject', v ? '1' : '0')
+              }}
+              onOpenSource={openAt}
             />
           ) : bottomTab === 'history' && gitStatus?.repo ? (
             <History project={project} head={gitStatus.head} onOpenCommitDiff={openCommitDiff} onError={setError} />

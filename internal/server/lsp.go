@@ -3,16 +3,23 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gusimo/gohomeassistant/internal/logbus"
 )
 
 // lsp connects the editor to a gopls process for one project. Each WebSocket
@@ -59,6 +66,14 @@ func (s *Server) lsp(w http.ResponseWriter, r *http.Request) {
 		stdin.Close()
 		cmd.Wait()
 	}()
+	var stdinMu sync.Mutex
+	write := func(msg []byte) error {
+		stdinMu.Lock()
+		defer stdinMu.Unlock()
+		_, err := fmt.Fprintf(stdin, "Content-Length: %d\r\n\r\n%s", len(msg), msg)
+		return err
+	}
+	go s.watchFiles(ctx, r.PathValue("name"), dir, write)
 
 	go func() { // gopls -> browser
 		defer cancel()
@@ -79,10 +94,107 @@ func (s *Server) lsp(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if _, err := fmt.Fprintf(stdin, "Content-Length: %d\r\n\r\n%s", len(msg), msg); err != nil {
+		if err := write(msg); err != nil {
 			return
 		}
 	}
+}
+
+// watchFiles tells gopls about files that changed on disk. gopls relies on
+// its client for that; without it, completion wouldn't know entities added
+// to Home Assistant, or files changed by git or another editor, until the
+// page is reloaded.
+func (s *Server) watchFiles(ctx context.Context, project, dir string, write func([]byte) error) {
+	events, unsubscribe := s.bus.Subscribe()
+	defer unsubscribe()
+	known := sourceFiles(dir)
+	for {
+		var ent, files bool
+		note := func(ev logbus.Event) {
+			ent = ent || ev.Type == "entities"
+			files = files || (ev.Type == "files" && ev.Project == project)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-events:
+			note(ev)
+		}
+		if !ent && !files {
+			continue
+		}
+		for settle := time.After(200 * time.Millisecond); settle != nil; { // bursts
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-events:
+				note(ev)
+			case <-settle:
+				settle = nil
+			}
+		}
+
+		const created, changed, deleted = 1, 2, 3 // LSP FileChangeType
+		type change struct {
+			URI  string `json:"uri"`
+			Type int    `json:"type"`
+		}
+		var changes []change
+		if files {
+			now := sourceFiles(dir)
+			for path, sig := range now {
+				if old, ok := known[path]; !ok {
+					changes = append(changes, change{fileURI(path), created})
+				} else if old != sig {
+					changes = append(changes, change{fileURI(path), changed})
+				}
+			}
+			for path := range known {
+				if _, ok := now[path]; !ok {
+					changes = append(changes, change{fileURI(path), deleted})
+				}
+			}
+			known = now
+		}
+		if ent && s.EntDir != "" {
+			changes = append(changes,
+				change{fileURI(filepath.Join(s.EntDir, "ent.go")), changed},
+				change{fileURI(filepath.Join(s.EntDir, "p", "p.go")), changed})
+		}
+		if len(changes) == 0 {
+			continue
+		}
+		msg, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": map[string]any{"changes": changes},
+		})
+		if write(msg) != nil {
+			return
+		}
+	}
+}
+
+func fileURI(path string) string {
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+}
+
+// sourceFiles returns size and modification time of the files gopls reads.
+func sourceFiles(dir string) map[string]string {
+	out := map[string]string{}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && path != dir && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if base := d.Name(); !d.IsDir() && (strings.HasSuffix(base, ".go") || base == "go.mod" || base == "go.sum") {
+			if fi, err := d.Info(); err == nil {
+				out[path] = fmt.Sprintf("%d|%d", fi.Size(), fi.ModTime().UnixNano())
+			}
+		}
+		return nil
+	})
+	return out
 }
 
 // readFramed reads one Content-Length framed message (LSP and DAP use the

@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -45,6 +47,30 @@ func do(t *testing.T, method, url, body string) (int, string) {
 	defer res.Body.Close()
 	b, _ := io.ReadAll(res.Body)
 	return res.StatusCode, string(b)
+}
+
+// Go to definition may read Go's own sources (and the SDK, entities,
+// modules), but nothing else on the machine.
+func TestSourceOnlyServesGoSources(t *testing.T) {
+	srv, demo := setup(t)
+	goroot := runtime.GOROOT()
+	get := func(path string) (int, string) {
+		return do(t, "GET", srv.URL+"/api/source?path="+url.QueryEscape(path), "")
+	}
+	if code, body := get(filepath.Join(goroot, "src", "fmt", "print.go")); code != 200 || !strings.Contains(body, "package fmt") {
+		t.Fatalf("fmt/print.go: %d %.80s", code, body)
+	}
+	for _, p := range []string{
+		"/etc/passwd",
+		filepath.Join(demo, "main.go"), // projects have their own API
+		filepath.Join(goroot, "src", "..", "..", "etc", "passwd.go"),
+		filepath.Join(goroot, "VERSION"),
+		goroot + "x/a.go",
+	} {
+		if code, _ := get(p); code != 403 {
+			t.Errorf("%s: status %d, want 403", p, code)
+		}
+	}
 }
 
 func TestFileAccessStaysInsideProject(t *testing.T) {

@@ -17,7 +17,11 @@ changed.
   (Delve)
 - **Git per project**: changes, diffs, commits, history, restore old versions
 - **Entity browser** with live state, attributes and "insert as code"
-- **Live logs** of every project
+- **Logs that wait for you**: kept on disk, so you can open the UI days later
+  and see what happened; filter by project and level, search, and a marker
+  shows what is new since your last visit
+- **Execution traces**: every handler run with what triggered it, what it
+  logged, which services it called and what failed
 - **Login with your Home Assistant account** (administrators only)
 
 ![Editor with the entity browser and live logs](docs/screenshots/editor.png)
@@ -180,10 +184,19 @@ together with the image or add-on.
 - `c.Run()`
 
 Handlers run one at a time, so you don't need locks. A panic in a handler is
-logged and doesn't stop the project.
+logged as an error and doesn't stop the project.
 
-You can import third-party Go modules as usual: `go.mod` / `go.sum` in the
-project, downloaded on build (this needs internet access).
+If Home Assistant restarts or the connection drops, projects keep running.
+Once it is back they reload all states, and handlers are called for what
+changed in the meantime.
+
+Use the standard `log` package for output. Lines appear in the Logs tab
+(GoHomeAssistant adds the time) and in the trace of the handler that wrote
+them.
+
+You can import third-party Go modules as usual. Just add the import: the
+module is added to `go.mod` / `go.sum` and downloaded on the next build (this
+needs internet access).
 
 ## The web UI
 
@@ -193,6 +206,10 @@ project, downloaded on build (this needs internet access).
   turn it off for delicate edits or while debugging. *Rebuild* saves
   unsaved changes first. Build errors appear as red markers. Files changed on disk (git, other editors) reload
   automatically unless you have unsaved edits.
+  **Go to definition** (F12, ⌘/Ctrl+click, or the context menu; long-press
+  on a phone) opens the definition: files of the project in the editor,
+  the SDK, the generated entities, Go's standard library and third-party
+  modules read-only.
 - **Entities** (button in the header): search, live state, attributes.
   **Insert** puts e.g. `ent.Sensor.Power` at the cursor.
 - **Snippets** (button in the header): ready-made code such as *On state
@@ -209,14 +226,30 @@ project, downloaded on build (this needs internet access).
   breakpoint is hit. Click left of a line number to set a breakpoint. You
   get Continue (F5), Pause, Step over (F10), Step into (F11), Step out
   (Shift+F11), the call stack and expandable variables. After a hot reload
-  the debugger re-attaches with your breakpoints.
+  the debugger re-attaches with your breakpoints. If the connection to the
+  debugger is lost (phone asleep, network change) it reconnects, and a
+  program paused at a breakpoint stays paused there.
 - **Changes** (sidebar) and **History** tab: every project is a git
   repository (new projects get an initial commit; older ones get an
   *Initialize git* button). Click a changed file to see its diff, commit with
   a message (author: your HA user) or discard. In History, open any commit's
   files as a diff and **Restore this version** into the working copy.
-- **Logs** tab: output of all projects and GoHomeAssistant itself, filterable
-  by project.
+- **Logs** tab: output of all projects and GoHomeAssistant itself. Filter by
+  project and level (*warnings and errors* shows build failures, crashes,
+  handler panics and failed service calls), or search. Logs are kept on disk
+  (up to 64 MB, oldest deleted first) and survive restarts; **Load older**
+  goes back in time. A line marks what is new since your last visit, and the
+  tab shows a count of warnings and errors you haven't seen.
+- **Traces** tab: one line per handler run, newest first, e.g.
+  `binary_sensor.front_door: off → on · 1 call · 2 ms`. Open it to see the
+  steps: log lines, service calls with their data, duration and error, and a
+  panic with its stack. Click a source position (`main.go:18`) to jump to
+  that line. Runs in which a call failed or the handler panicked are red and
+  counted on the tab. Handlers for one entity or one event type are always
+  traced; "all entities" / "all events" handlers and `Go` only when they log
+  or call something. Service calls outside of a handler (in `main`, in your
+  own goroutines) get a trace of their own. Traces with steps are kept on
+  disk like logs; empty ones only until the next restart.
 
 ## Configuration
 
@@ -285,7 +318,7 @@ The UI can run arbitrary code with full access to Home Assistant. Therefore:
 | `internal/codegen` | Generates `ent` from `get_states` / `get_services` |
 | `internal/server` | REST API, event stream, LSP/DAP bridges, git |
 | `internal/auth` | HA OAuth login, Ingress mode, sessions |
-| `internal/logbus` | Log and status fan-out to the UI |
+| `internal/logbus` | Logs, traces and status: fan-out to the UI, history on disk |
 | `sdk/` | The module projects import (no dependencies) |
 | `web/` | The UI (React, Vite, Monaco), embedded into the binary |
 | `addon/` | Home Assistant app definition (`config.yaml`, docs) |
@@ -314,6 +347,9 @@ embeds.
 - While a program is paused in the debugger, HA events queue up (about 25
   minutes on a busy instance). Beyond that the project reconnects.
 - Each open project runs its own gopls (a few hundred MB of memory).
+- What a project prints is logged as INFO; only failures GoHomeAssistant sees
+  itself (build errors, crashes, handler panics, failed service calls) are
+  warnings or errors.
 - Git is local only for now.
 
 ## Roadmap

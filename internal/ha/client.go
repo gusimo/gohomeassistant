@@ -22,6 +22,10 @@ var ErrNotConnected = errors.New("not connected to Home Assistant")
 type Client struct {
 	url, token string
 	log        *slog.Logger
+	// OnReconnect, if set before Run, is called after every reconnect, once
+	// the subscriptions are restored. Events in between were missed.
+	OnReconnect func()
+	connects    int
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
@@ -237,6 +241,9 @@ func (c *Client) session(ctx context.Context) error {
 		if !success(res) {
 			c.log.Error("resubscribe rejected", "msg", s.msg, "result", string(res))
 		}
+	}
+	if c.connects++; c.connects > 1 && c.OnReconnect != nil {
+		c.OnReconnect()
 	}
 
 	ping := time.NewTicker(30 * time.Second)

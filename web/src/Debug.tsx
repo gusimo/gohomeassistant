@@ -24,7 +24,9 @@ export type Debugger = {
 }
 
 // useDebugger attaches to the project whenever it runs under Delve (again
-// after every hot reload) and keeps its breakpoints in sync.
+// after every hot reload) and keeps its breakpoints in sync. A lost
+// connection (phone asleep, network change) is re-established; a program
+// that was paused stays paused at the same place.
 export function useDebugger(project: string | null, status: Status | undefined, breakpoints: Breakpoints): Debugger {
   const [state, setState] = useState<DebugState>('off')
   const [error, setError] = useState<string | null>(null)
@@ -36,6 +38,10 @@ export function useDebugger(project: string | null, status: Status | undefined, 
   const thread = useRef(0)
   const bpRef = useRef(breakpoints)
   const sent = useRef<Breakpoints>({})
+  // Where this client paused the program: restored after a reconnect.
+  const paused = useRef<{ pid?: number; thread: number; reason: string } | null>(null)
+  const [attempt, setAttempt] = useState(0) // changes to connect again
+  const retries = useRef(0)
 
   const dir = status?.dir
   const abs = useCallback((rel: Breakpoints) => {
@@ -69,8 +75,26 @@ export function useDebugger(project: string | null, status: Status | undefined, 
     const url = new URL(`./api/projects/${encodeURIComponent(project)}/dap`, location.href)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     let closed = false
+    let retry = 0
+    const reconnect = () => {
+      clearTimeout(retry)
+      retry = 0
+      setAttempt((n) => n + 1)
+    }
+    const onVisible = () => {
+      if (retry && document.visibilityState === 'visible') reconnect() // don't wait for the timer
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const resume = paused.current?.pid === pid ? paused.current : null
+    paused.current = resume
     const c = new DAPClient(url.toString(), {
       onStopped: async (threadId, why) => {
+        if (why === 'entry' && resume) {
+          // Attached again to the program we had paused: it is still where it was.
+          threadId = resume.thread
+          why = resume.reason
+        }
+        paused.current = { pid, thread: threadId, reason: why }
         thread.current = threadId
         setReason(why)
         setState('stopped')
@@ -85,29 +109,38 @@ export function useDebugger(project: string | null, status: Status | undefined, 
         }
       },
       onContinued: () => {
+        paused.current = null
         setState('running')
         setFrames([])
         setFrame(null)
         setVariables([])
       },
       onClose: () => {
-        if (!closed) setState('off')
+        if (closed) return
+        setState('attaching')
+        retry = window.setTimeout(reconnect, Math.min(1000 * 2 ** retries.current++, 10_000))
       },
     })
     client.current = c
     sent.current = bpRef.current
-    c.start(abs(bpRef.current))
-      .then(() => setState((s) => (s === 'attaching' ? 'running' : s)))
+    c.start(abs(bpRef.current), !!resume)
+      .then(() => {
+        retries.current = 0
+        setState((s) => (s === 'attaching' ? 'running' : s))
+      })
       .catch((e) => {
+        if (closed || retry) return // connection lost: trying again
         setState('error')
         setError(String(e))
       })
     return () => {
       closed = true
+      clearTimeout(retry)
+      document.removeEventListener('visibilitychange', onVisible)
       client.current = null
       c.detach()
     }
-  }, [project, port, pid, dir, abs, showFrame])
+  }, [project, port, pid, dir, abs, showFrame, attempt])
 
   // Send changed breakpoints.
   useEffect(() => {
@@ -131,6 +164,7 @@ export function useDebugger(project: string | null, status: Status | undefined, 
   // Delve doesn't always send "continued" after a step; reflect it ourselves.
   const resume = (fn: (c: DAPClient, t: number) => Promise<unknown>) =>
     act(async (c, t) => {
+      paused.current = null
       setState('running')
       setFrames([])
       setFrame(null)

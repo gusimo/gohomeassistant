@@ -150,6 +150,39 @@ button.gha-tab.gha-active { color: var(--text); border-bottom-color: var(--accen
 .gha-log-line.gha-level-warn .gha-log-msg { color: var(--warn); }
 .gha-log-line.gha-level-error .gha-log-msg { color: var(--err); }
 .gha-log-err { margin: 2px 0 4px; color: var(--err); font: inherit; white-space: pre-wrap; }
+.gha-log-filters { flex-wrap: wrap; }
+.gha-select {
+  font: inherit; font-size: 12px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px;
+}
+.gha-search.gha-log-search { margin: 0; padding: 2px 8px; font-size: 12px; flex: 0 1 260px; min-width: 100px; }
+.gha-log-older { padding: 4px 12px; text-align: center; font-family: system-ui, sans-serif; }
+.gha-log-day {
+  display: flex; align-items: center; gap: 10px; padding: 4px 12px;
+  color: var(--muted); font-family: system-ui, sans-serif; font-size: 11px;
+}
+.gha-log-day::before, .gha-log-day::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+.gha-log-visit { color: var(--accent); }
+.gha-log-visit::before, .gha-log-visit::after { border-color: var(--accent); }
+.gha-count {
+  min-width: 16px; padding: 0 5px; border-radius: 8px; font-size: 11px; line-height: 16px;
+  background: var(--err); color: #fff; text-align: center;
+}
+
+/* Traces */
+.gha-trace { display: flex; gap: 10px; padding: 2px 12px; cursor: pointer; align-items: baseline; }
+.gha-trace:hover, .gha-trace.gha-open { background: var(--hover); }
+.gha-trace-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gha-trace-meta { color: var(--muted); flex: none; }
+.gha-trace-failed .gha-trace-title, .gha-trace-failed .gha-trace-meta { color: var(--err); }
+.gha-trace-steps { padding: 2px 12px 6px 34px; border-bottom: 1px solid var(--border); }
+.gha-trace-step { display: flex; gap: 10px; padding: 1px 0; }
+.gha-trace-at { color: var(--muted); flex: none; width: 64px; text-align: right; }
+.gha-trace-msg { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.gha-step-kind { color: var(--accent); }
+.gha-step-failed .gha-step-kind, .gha-step-panic .gha-step-kind { color: var(--err); }
+.gha-trace-data { margin: 0; font: inherit; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.gha-src { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 /* User */
 .gha-user {
@@ -353,6 +386,17 @@ button.gha-danger-solid { background: var(--err); border-color: var(--err); colo
   .gha-log-line { flex-wrap: wrap; gap: 0 8px; padding: 3px 8px; }
   .gha-log-project { min-width: 0; }
   .gha-log-msg { flex-basis: 100%; }
+  .gha-log-filters { gap: 6px 10px; padding: 6px 8px; }
+  .gha-log-filters .gha-spacer { display: none; }
+  .gha-select, .gha-search.gha-log-search { font-size: 16px; min-height: 36px; } /* 16px: no zoom on focus (iOS) */
+  .gha-search.gha-log-search { flex: 1 1 140px; }
+
+  /* Traces: what happened on its own line, steps use the full width */
+  .gha-trace { flex-wrap: wrap; gap: 0 8px; padding: 6px 8px; }
+  .gha-trace-title { flex-basis: 100%; order: 1; white-space: normal; padding-left: 18px; }
+  .gha-trace-meta { margin-left: auto; }
+  .gha-trace-steps { padding: 2px 8px 8px; }
+  .gha-trace-at { width: 52px; }
 
   /* Debugger: call stack above variables */
   .gha-debug-toolbar { padding: 4px 8px; }

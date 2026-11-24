@@ -68,7 +68,7 @@ func (e Entity) Attr(name string) any {
 // OnChange calls fn whenever this entity's state or attributes change.
 func (e Entity) OnChange(fn func(StateChange)) {
 	if c := Default(); c != nil {
-		c.OnStateChange(e.ID, fn)
+		c.onStateChange(e.ID, fn, caller(1))
 		return
 	}
 	panic(ErrNotConnected)

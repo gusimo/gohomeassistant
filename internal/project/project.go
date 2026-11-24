@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -168,16 +170,47 @@ func (p *Project) build(ctx context.Context, debug bool) (string, error) {
 	if debug {
 		args = append(args, "-gcflags=all=-N -l") // no optimizations: accurate stepping and variables
 	}
-	cmd := exec.CommandContext(ctx, "go", append(args, ".")...)
-	cmd.Dir = p.dir
-	cmd.Env = append(os.Environ(), "GOWORK="+work)
-	var stderr bytes.Buffer
-	cmd.Stdout = &stderr
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%w\n%s", err, strings.TrimSpace(stderr.String()))
+	run := func(args ...string) error {
+		cmd := exec.CommandContext(ctx, "go", args...)
+		cmd.Dir = p.dir
+		cmd.Env = append(os.Environ(), "GOWORK="+work)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w\n%s", err, bytes.TrimSpace(out))
+		}
+		return nil
+	}
+	args = append(args, ".")
+	err = run(args...)
+	// A newly imported third-party package: add its module to go.mod, like
+	// "go get" on a terminal would, and build again.
+	if pkgs := missingPackages(err); len(pkgs) > 0 {
+		p.log.Info("adding modules to go.mod", "packages", strings.Join(pkgs, " "))
+		if getErr := run(append([]string{"get"}, pkgs...)...); getErr != nil {
+			return "", fmt.Errorf("%w\n\ngo get failed: %w", err, getErr)
+		}
+		err = run(args...)
+	}
+	if err != nil {
+		return "", err
 	}
 	return bin, nil
+}
+
+var missingPackage = regexp.MustCompile(`(?:no required module provides package|missing go\.sum entry for module providing package) ([^\s;]+)`)
+
+// missingPackages returns the imports a failed build couldn't resolve.
+func missingPackages(buildErr error) []string {
+	if buildErr == nil {
+		return nil
+	}
+	var pkgs []string
+	for _, m := range missingPackage.FindAllStringSubmatch(buildErr.Error(), -1) {
+		if !slices.Contains(pkgs, m[1]) {
+			pkgs = append(pkgs, m[1])
+		}
+	}
+	return pkgs
 }
 
 type process struct {

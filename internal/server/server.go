@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,12 @@ type Server struct {
 	// HA and Refs power the entity browser (optional).
 	HA   *ha.Client
 	Refs func() map[string]string
+	// EntDir is the generated entities module; gopls is told when it changes.
+	EntDir string
+	// SDKDir is the SDK module. Its source, like EntDir's and Go's own, can
+	// be read in the editor (go to definition).
+	SDKDir string
+	goDirs []string // GOROOT and the module cache
 	// SnippetsFile stores the user's own snippets.
 	SnippetsFile string
 	snippetsMu   sync.Mutex
@@ -63,7 +70,11 @@ func New(mgr *project.Manager, bus *logbus.Bus, goVersion string, log *slog.Logg
 	if err != nil {
 		log.Warn("gopls not found: no code completion in the editor")
 	}
-	return &Server{mgr: mgr, bus: bus, goVersion: goVersion, log: log, gopls: gopls}
+	s := &Server{mgr: mgr, bus: bus, goVersion: goVersion, log: log, gopls: gopls}
+	if out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output(); err == nil {
+		s.goDirs = strings.Fields(string(out))
+	}
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
@@ -87,6 +98,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/projects/{name}/files/{path...}", s.writeFile)
 	mux.HandleFunc("DELETE /api/projects/{name}/files/{path...}", s.deleteFile)
 	mux.HandleFunc("GET /api/events", s.events)
+	mux.HandleFunc("GET /api/logs", s.logs)
+	mux.HandleFunc("GET /api/source", s.source)
 	mux.HandleFunc("GET /api/projects/{name}/lsp", s.lsp)
 	mux.HandleFunc("GET /api/entities", s.entities)
 	mux.HandleFunc("POST /api/projects/{name}/debug", s.setDebug)
@@ -330,9 +343,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return err
 	}
 	lastSeq := int64(0)
-	for _, e := range s.bus.History() {
+	logs, traces := s.bus.Snapshot()
+	for _, e := range logs {
 		send(logbus.Event{Type: "log", Log: &e})
-		lastSeq = e.Seq
+		lastSeq = max(lastSeq, e.Seq)
+	}
+	for _, e := range traces {
+		send(logbus.Event{Type: "trace", Log: &e})
+		lastSeq = max(lastSeq, e.Seq)
 	}
 	for _, st := range s.mgr.Statuses() {
 		send(logbus.Event{Type: "status", Status: st})
@@ -357,6 +375,31 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 	}
+}
+
+// logs returns older log entries (or traces) from disk, oldest first:
+// those before the entry "before", filtered like the Logs tab filters.
+func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := logbus.Filter{Limit: 500, Traces: q.Get("traces") == "1", Text: q.Get("q")}
+	f.Before, _ = strconv.ParseInt(q.Get("before"), 10, 64)
+	if q.Has("project") {
+		p := q.Get("project")
+		f.Project = &p
+	}
+	if l := q.Get("level"); l != "" {
+		if err := f.Level.UnmarshalText([]byte(l)); err != nil {
+			http.Error(w, "unknown level", http.StatusBadRequest)
+			return
+		}
+	} else {
+		f.Level = slog.LevelDebug
+	}
+	entries := s.bus.Query(f)
+	if entries == nil {
+		entries = []logbus.Entry{}
+	}
+	writeJSON(w, entries)
 }
 
 func (s *Server) projectDir(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -393,6 +436,33 @@ func (s *Server) filePath(w http.ResponseWriter, r *http.Request) (string, bool)
 		}
 	}
 	return filepath.Join(dir, filepath.FromSlash(clean)), true
+}
+
+// source returns a Go file outside the projects that code refers to: the
+// SDK, the generated entities, the standard library or a third-party module.
+func (s *Server) source(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Clean(r.URL.Query().Get("path"))
+	allowed := false
+	for _, dir := range append([]string{s.SDKDir, s.EntDir}, s.goDirs...) {
+		if dir == "" {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = real
+		}
+		allowed = allowed || strings.HasPrefix(path, dir+string(filepath.Separator))
+	}
+	if !allowed || !strings.HasSuffix(path, ".go") {
+		http.Error(w, "not a Go source file of the SDK, the entities, Go or a module", http.StatusForbidden)
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(b)
 }
 
 // entities returns all current states, each with the Go expression of the

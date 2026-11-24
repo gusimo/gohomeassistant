@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -20,10 +21,25 @@ import (
 type Bridge struct {
 	ha  *ha.Client
 	log *slog.Logger
+	// OnTrace, if set, receives the execution traces projects report.
+	OnTrace func(project string, start time.Time, failed, noteworthy bool, trace json.RawMessage)
+
+	mu       sync.Mutex
+	sessions map[*session]struct{}
 }
 
 func New(client *ha.Client, log *slog.Logger) *Bridge {
-	return &Bridge{ha: client, log: log}
+	return &Bridge{ha: client, log: log, sessions: map[*session]struct{}{}}
+}
+
+// Reconnected tells all projects that the connection to Home Assistant was
+// lost and is back: they missed events and reload their states.
+func (b *Bridge) Reconnected() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for s := range b.sessions {
+		s.send(map[string]any{"type": "gha/reconnected"})
+	}
 }
 
 // Serve listens on the unix socket at path until ctx is cancelled.
@@ -62,6 +78,14 @@ func (b *Bridge) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	s := &session{b: b, out: make(chan []byte, outBuffer), subs: map[int64]*ha.Subscription{}, done: make(chan struct{})}
 	defer s.cleanup()
+	b.mu.Lock()
+	b.sessions[s] = struct{}{}
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.sessions, s)
+		b.mu.Unlock()
+	}()
 
 	go func() { // single writer
 		for {
@@ -84,8 +108,36 @@ func (b *Bridge) handle(ctx context.Context, conn net.Conn) {
 		if err := dec.Decode(&msg); err != nil {
 			return
 		}
+		switch msg["type"] {
+		case "gha/trace":
+			b.trace(msg)
+			continue
+		case "gha/log": // from the SDK itself, e.g. a handler panic
+			var level slog.Level
+			text, _ := msg["level"].(string)
+			_ = level.UnmarshalText([]byte(text))
+			b.log.Log(ctx, level, fmt.Sprint(msg["msg"]), "project", msg["project"], "source", "output")
+			continue
+		}
 		go s.request(ctx, msg)
 	}
+}
+
+func (b *Bridge) trace(msg map[string]any) {
+	t, ok := msg["trace"].(map[string]any)
+	raw, err := json.Marshal(t)
+	if !ok || err != nil || b.OnTrace == nil {
+		return
+	}
+	project, _ := msg["project"].(string)
+	failed, _ := msg["failed"].(bool)
+	noteworthy, _ := msg["noteworthy"].(bool)
+	startText, _ := t["start"].(string)
+	start, err := time.Parse(time.RFC3339Nano, startText)
+	if err != nil {
+		start = time.Now()
+	}
+	b.OnTrace(project, start, failed, noteworthy, raw)
 }
 
 func (s *session) request(ctx context.Context, msg map[string]any) {

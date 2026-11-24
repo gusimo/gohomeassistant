@@ -146,6 +146,32 @@ func TestDebugger(t *testing.T) {
 		t.Fatalf("service called while paused: %+v", call)
 	default:
 	}
+	// The connection drops while paused (phone asleep, network change). The
+	// UI attaches again with stopOnEntry, which keeps the program paused;
+	// without it, Delve resumes the program on configurationDone. The thread
+	// it remembered is still at the breakpoint.
+	d.conn.Close()
+	time.Sleep(300 * time.Millisecond)
+	d = dialDAP(t, port)
+	d.request("initialize", map[string]any{"adapterID": "go", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"})
+	d.request("attach", map[string]any{"mode": "remote", "stopOnEntry": true})
+	d.waitEvent("initialized")
+	d.request("setBreakpoints", map[string]any{
+		"source":      map[string]any{"path": filepath.Join(proj, "main.go")},
+		"breakpoints": []map[string]any{{"line": breakpointLine}},
+	})
+	d.request("configurationDone", nil)
+	d.waitEvent("stopped")
+	json.Unmarshal(d.request("stackTrace", map[string]any{"threadId": ev.ThreadID, "levels": 5}), &stack)
+	if top := stack.StackFrames[0]; top.Line != breakpointLine {
+		t.Fatalf("after reconnecting, thread %d is at %s:%d", ev.ThreadID, top.Source.Path, top.Line)
+	}
+	select {
+	case call := <-fake.Calls:
+		t.Fatalf("program resumed by the reconnect: %+v", call)
+	default:
+	}
+
 	d.request("continue", map[string]any{"threadId": ev.ThreadID})
 	waitForLight(t, fake, "light.debug") // the paused call goes through
 
